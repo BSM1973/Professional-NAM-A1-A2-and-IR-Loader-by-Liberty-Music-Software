@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(LibertyNeuralMatrix VERSION 0.5.0 LANGUAGES C CXX)
+project(LibertyNeuralMatrix VERSION 0.6.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -62,10 +62,21 @@ target_sources(LibertyNeuralMatrix PRIVATE
   Source/PluginEditor.h Source/PluginEditor.cpp)
 target_compile_definitions(LibertyNeuralMatrix PRIVATE
   JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
-target_link_libraries(LibertyNeuralMatrix PRIVATE liberty_nam_core
+# NAM architecture parsers register in static translation-unit constructors.
+# Force all object files into the actual plugin wrappers (Apple ld64 / MSVC).
+target_link_libraries(LibertyNeuralMatrix PRIVATE
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>"
   juce::juce_audio_utils juce::juce_dsp
   PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 if(WIN32)
   set_target_properties(LibertyNeuralMatrix PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
+
+# Catch missing NAM architecture registrations before publishing binaries.
+enable_testing()
+add_executable(liberty_nam_registry_smoke tests/nam_registry_smoke.cpp)
+target_link_libraries(liberty_nam_registry_smoke PRIVATE
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>")
+target_compile_features(liberty_nam_registry_smoke PRIVATE cxx_std_20)
+add_test(NAME NAM_Registries COMMAND liberty_nam_registry_smoke)

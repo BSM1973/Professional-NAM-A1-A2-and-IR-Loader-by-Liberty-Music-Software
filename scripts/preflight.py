@@ -9,6 +9,7 @@ paths = [
     'CMakeLists.txt',
     'Source/PluginProcessor.h', 'Source/PluginProcessor.cpp',
     'Source/PluginEditor.h', 'Source/PluginEditor.cpp', 'Source/ArtAssets.h',
+    'Source/TextUtf8.h', 'tests/nam_registry_smoke.cpp',
     '.github/workflows/build.yml', 'README.md', 'docs/ROADMAP.md',
 ]
 errors=[]
@@ -71,6 +72,30 @@ for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
     for pattern in ['\ufffd', 'Ã©', 'Ã¨', 'Ãª', 'Ã ', 'â€™', 'â€œ', 'â€', '\u25a1']:
         if pattern in content:
             errors.append(f'Mojibake in {name}: {pattern!r}')
+# French-text regression guard: non-ASCII source string literals MUST go
+# through libertyText::u8, including strings introduced in future source files.
+for path in sorted((root / 'Source').rglob('*.cpp')) + sorted((root / 'Source').rglob('*.h')):
+    name = str(path.relative_to(root))
+    if name == 'Source/ArtAssets.h':
+        continue
+    content = path.read_text(encoding='utf-8')
+    for match in re.finditer(r'"(?:\\.|[^"\\])*"', content):
+        literal = match.group(0)
+        if any(ord(c) > 127 for c in literal):
+            prefix = content[max(0,match.start()-65):match.start()]
+            if not re.search(r'libertyText::u8\s*\(\s*    print('\nPRE-FLIGHT FAILED: ' + ', '.join(errors), file=sys.stderr)
+    sys.exit(1)
+# Independent mathematical layout audit, no JUCE binaries required.
+import subprocess
+subprocess.run([sys.executable, str(root / 'scripts/check_geometry.py')], check=True)
+print('\nPRE-FLIGHT PASSED. NOTE: this does not compile or run DSP.')
+, prefix):
+                errors.append(f'Raw non-ASCII literal in {name}: {literal[:80]}')
+if '$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>' not in cmake:
+    errors.append('WHOLE_ARCHIVE missing: WaveNet/LSTM parsers could be stripped')
+if 'NAM_Registries' not in cmake:
+    errors.append('NAM architecture registration smoke test missing')
+
 if errors:
     print('\nPRE-FLIGHT FAILED: ' + ', '.join(errors), file=sys.stderr)
     sys.exit(1)

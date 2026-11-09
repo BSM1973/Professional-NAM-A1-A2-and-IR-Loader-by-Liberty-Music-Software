@@ -62,6 +62,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # upload-artifact directly flattens Unix executable permissions and can
       # break macOS .app/.vst3/.component bundles. Pack them with macOS ditto first.
+      - name: Test NAM architecture registrations (macOS)
+        if: runner.os == 'macOS'
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Test NAM architecture registrations (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ctest --test-dir "$env:RUNNER_TEMP/lnm-b" -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate and package macOS bundles with preserved permissions
         if: runner.os == 'macOS'
         shell: bash

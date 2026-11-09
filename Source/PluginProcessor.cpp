@@ -1,3 +1,4 @@
+#include "TextUtf8.h"
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
@@ -24,30 +25,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout LibertyNeuralMatrixAudioProc
     p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kOutput, 1}, "Output (dB)", -24.0f, 24.0f, 0.0f));
     p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kNAMMix, 1}, "NAM A/B", 0.0f, 1.0f, 0.0f));
     p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kIRMix, 1}, "IR A/B", 0.0f, 1.0f, 0.0f));
-    auto addFloat = [&](const char* id, const char* name, float min, float max, float initial)
+    auto addFloat = [&](const char* id, const juce::String& name, float min, float max, float initial)
     {
         p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, min, max, initial));
     };
-    auto addBool = [&](const char* id, const char* name, bool initial)
+    auto addBool = [&](const char* id, const juce::String& name, bool initial)
     {
         p.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, initial));
     };
     // Tone controls are real post-NAM filters, not exposed as controls of a captured amplifier.
     addFloat("bass", "Graves post NAM (dB)", -12.0f, 12.0f, 0.0f);
-    addFloat("middle", "Médiums post NAM (dB)", -12.0f, 12.0f, 0.0f);
+    addFloat("middle", libertyText::u8("Médiums post NAM (dB)"), -12.0f, 12.0f, 0.0f);
     addFloat("treble", "Aigus post NAM (dB)", -12.0f, 12.0f, 0.0f);
-    addFloat("presence", "Présence post NAM (dB)", -12.0f, 12.0f, 0.0f);
+    addFloat("presence", libertyText::u8("Présence post NAM (dB)"), -12.0f, 12.0f, 0.0f);
     addBool("ampOn", "Activer section ampli", true);
     addBool("cabOn", "Activer section baffle", true);
     addFloat("irAGain", "Niveau IR A (dB)", -24.0f, 6.0f, 0.0f);
     addFloat("irBGain", "Niveau IR B (dB)", -24.0f, 6.0f, 0.0f);
-    addBool("irAPhase", "Inverser polarité IR A", false);
-    addBool("irBPhase", "Inverser polarité IR B", false);
+    addBool("irAPhase", libertyText::u8("Inverser polarité IR A"), false);
+    addBool("irBPhase", libertyText::u8("Inverser polarité IR B"), false);
     addFloat("cabHP", "Coupe-bas baffle (Hz)", 20.0f, 250.0f, 70.0f);
     addFloat("cabLP", "Coupe-haut baffle (Hz)", 2500.0f, 18000.0f, 12000.0f);
     addBool("gateOn", "Activer gate", false);
     addFloat("gateThreshold", "Seuil gate (dBFS)", -80.0f, -20.0f, -55.0f);
-    addBool("boostOn", "Boost pré NAM +6 dB", false);
+    addBool("boostOn", libertyText::u8("Boost pré NAM +6 dB"), false);
     addBool("delayOn", "Activer delay", false);
     // Microphone families are original post-IR tone profiles, not physical remiking.
     const juce::StringArray micChoices { "Neutre", "Dynamique type 57", "Dynamique type 421",
@@ -68,7 +69,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout LibertyNeuralMatrixAudioProc
 
 LibertyNeuralMatrixAudioProcessor::LibertyNeuralMatrixAudioProcessor()
  : juce::AudioProcessor(juce::AudioProcessor::BusesProperties()
-       .withInput("Entrée", juce::AudioChannelSet::stereo(), true)
+       .withInput(libertyText::u8("Entrée"), juce::AudioChannelSet::stereo(), true)
        .withOutput("Sortie", juce::AudioChannelSet::stereo(), true)),
    state(*this, nullptr, "LIBERTY_STATE", parameters())
 {}
@@ -135,11 +136,11 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
            #endif
             auto replacement = nam::get_dsp(nativePath);
             if (!replacement || replacement->NumInputChannels() != 1 || replacement->NumOutputChannels() != 1)
-                return juce::Result::fail("Ce prototype exige un NAM mono entrée/sortie.");
+                return juce::Result::fail(libertyText::u8("Ce prototype exige un NAM mono entrée/sortie."));
 
             auto expectedRate = replacement->GetExpectedSampleRate();
             if (expectedRate > 0 && std::abs(expectedRate - preparedRate) > 1.0)
-                return juce::Result::fail("Fréquence du NAM différente du projet. Utiliser le taux natif (souvent 48 kHz). ");
+                return juce::Result::fail(libertyText::u8("Fréquence du NAM différente du projet. Utiliser le taux natif (souvent 48 kHz). "));
             replacement->Reset(preparedRate, maxBlock);
             std::unique_ptr<nam::DSP> previous;
             {
@@ -152,7 +153,7 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
         }
         catch (const std::exception& e)
         {
-            return juce::Result::fail("Impossible de charger le modèle NAM : " + juce::String(e.what()));
+            return juce::Result::fail(libertyText::u8("Impossible de charger le modèle NAM : ") + libertyText::u8(e.what()));
         }
     }
     else
@@ -169,7 +170,7 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
         const int previewSamples = static_cast<int>(juce::jmin<juce::int64>(reader->lengthInSamples, 192000));
         juce::AudioBuffer<float> samples(static_cast<int>(juce::jmin<unsigned int>(reader->numChannels, 2u)), previewSamples);
         if (!reader->read(&samples, 0, previewSamples, 0, true, true))
-            return juce::Result::fail("Impossible de décoder cette IR.");
+            return juce::Result::fail(libertyText::u8("Impossible de décoder cette IR."));
         for (int index = 0; index < previewSamples; ++index)
         {
             const int bin = juce::jmin(127, index * 128 / previewSamples);

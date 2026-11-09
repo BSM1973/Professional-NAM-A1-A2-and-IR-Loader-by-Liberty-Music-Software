@@ -1,3 +1,4 @@
+#include "TextUtf8.h"
 #include "PluginEditor.h"
 #include "ArtAssets.h"
 #include <algorithm>
@@ -26,6 +27,83 @@ void card(juce::Graphics& g, const juce::Rectangle<int>& r, const juce::String& 
     g.setColour(bronze);
     g.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
     g.drawFittedText(title, r.withHeight(42).reduced(23, 4), juce::Justification::centredLeft, 1);
+}
+
+
+// Two model-specific Liberty amp illustrations. These are artistic faces,
+// never an identification or copy of the original captured hardware.
+void drawModelAmp(juce::Graphics& g, juce::Rectangle<int> bounds,
+                  const juce::String& fileName, int slot)
+{
+    g.saveState();
+    g.reduceClipRegion(bounds);
+    const bool loaded = fileName.isNotEmpty() && fileName != "Charger un fichier";
+    const auto lower = fileName.toLowerCase();
+    int style = 0;
+    if (lower.contains("plexi") || lower.contains("british") || lower.contains("jcm") || lower.contains("2203")) style = 1;
+    else if (lower.contains("rect") || lower.contains("mesa") || lower.contains("highgain") || lower.contains("5150")) style = 2;
+    else if (lower.contains("twin") || lower.contains("deluxe") || lower.contains("clean") || lower.contains("princeton")) style = 3;
+    else if (lower.contains("bass") || lower.contains("svt") || lower.contains("ampeg")) style = 4;
+    else if (loaded) style = (int)((static_cast<unsigned int>(fileName.hashCode()) + (unsigned int)slot * 3u) % 5u);
+    const std::array<juce::Colour,5> covers {
+        juce::Colour::fromRGB(31,28,27), juce::Colour::fromRGB(38,29,22),
+        juce::Colour::fromRGB(19,23,30), juce::Colour::fromRGB(59,51,39),
+        juce::Colour::fromRGB(27,33,31) };
+    const std::array<juce::Colour,5> metal {
+        juce::Colour::fromRGB(116,85,53), juce::Colour::fromRGB(210,160,90),
+        juce::Colour::fromRGB(110,121,130), juce::Colour::fromRGB(226,203,164),
+        juce::Colour::fromRGB(134,159,146) };
+    const auto body = bounds.toFloat().reduced(5.0f, 20.0f);
+    const auto cover = covers[(size_t)style];
+    const auto face = metal[(size_t)style];
+    g.setColour(juce::Colours::black.withAlpha(0.64f));
+    g.fillRoundedRectangle(body.translated(0.0f, 5.0f), 12.0f);
+    g.setGradientFill(juce::ColourGradient(cover.brighter(0.3f), body.getTopLeft(),
+                                           cover.darker(0.2f), body.getBottomRight(), false));
+    g.fillRoundedRectangle(body, 12.0f);
+    g.setColour(face.withAlpha(0.8f));
+    g.drawRoundedRectangle(body, 12.0f, 1.6f);
+    auto grilleArea = body.reduced(12.0f, 14.0f);
+    grilleArea = grilleArea.withHeight(grilleArea.getHeight() * 0.55f);
+    g.setColour(juce::Colours::black.withAlpha(0.84f));
+    g.fillRoundedRectangle(grilleArea, 6.0f);
+    g.setColour(face.withAlpha(0.30f));
+    for (float y = grilleArea.getY() + 6; y < grilleArea.getBottom() - 4; y += 7)
+        g.drawHorizontalLine((int)y, grilleArea.getX() + 5, grilleArea.getRight() - 5);
+    for (int lamp = 0; lamp < (style == 2 ? 5 : 3); ++lamp)
+    {
+        const float x = grilleArea.getX() + (lamp + 1) * grilleArea.getWidth() / (style == 2 ? 6.0f : 4.0f);
+        auto tube = juce::Rectangle<float>(8, grilleArea.getHeight() * 0.43f)
+                        .withCentre({x, grilleArea.getCentreY() + 3.0f});
+        g.setColour(juce::Colour::fromRGB(248,116,40).withAlpha(loaded ? 0.75f : 0.19f));
+        g.fillRoundedRectangle(tube, 3.0f);
+    }
+    g.setColour(face);
+    g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+    g.drawFittedText("LIBERTY", grilleArea.toNearestInt().reduced(8, 6), juce::Justification::centred, 1);
+    auto controls = body.reduced(12.0f, 11.0f).withTrimmedTop(body.getHeight() * 0.61f);
+    g.setGradientFill(juce::ColourGradient(face.brighter(0.18f), controls.getTopLeft(),
+                                           face.darker(0.35f), controls.getBottomLeft(), false));
+    g.fillRoundedRectangle(controls, 5.0f);
+    const auto y = controls.getY() + controls.getHeight() * 0.45f;
+    for (int i = 0; i < 7; ++i)
+    {
+        auto x = controls.getX() + (i + 1.0f) * controls.getWidth() / 8.0f;
+        auto knob = juce::Rectangle<float>(12.0f,12.0f).withCentre({x,y});
+        g.setColour(juce::Colour::fromRGB(21,20,19));
+        g.fillEllipse(knob);
+        g.setColour(juce::Colours::white.withAlpha(0.72f));
+        g.drawLine(x,y-3,x,y-6,1.1f);
+    }
+    // Keep the model filename outside the face controls: no text overlap.
+    auto nameArea = bounds.reduced(10, 6).removeFromBottom(20);
+    g.setColour(loaded ? cream : secondary);
+    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    const auto title = loaded ? fileName.upToLastOccurrenceOf(".", false, false)
+                              : libertyText::u8("Aucun NAM chargé");
+    g.drawFittedText(juce::String(slot == 0 ? "A / " : "B / ") + title,
+                     nameArea, juce::Justification::centred, 1);
+    g.restoreState();
 }
 
 void panelLine(juce::Graphics& g, juce::Rectangle<int> area)
@@ -72,7 +150,7 @@ public:
         const bool hasB = std::any_of(b.begin(), b.end(), [](float x) { return x > 0.00001f; });
         if (!hasA && !hasB)
         {
-            caption(g, "Chargez une IR pour afficher sa forme d'onde réelle.", waveArea, 13);
+            caption(g, libertyText::u8("Chargez une IR pour afficher sa forme d'onde réelle."), waveArea, 13);
             return;
         }
         const float height = static_cast<float>(waveArea.getHeight()) * 0.44f;
@@ -220,7 +298,7 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
     ampImage = loadEmbeddedImage(libertyArt::ampJpegChunks);
     cabImage = loadEmbeddedImage(libertyArt::cabJpegChunks);
 
-    const std::array<juce::String,4> tabs {{ "AMPLI", "BAFFLES / IR", "EFFETS", "RÉGLAGES" }};
+    const std::array<juce::String,4> tabs {{ "AMPLI", "BAFFLES / IR", "EFFETS", libertyText::u8("RÉGLAGES") }};
     const std::array<juce::String,4> loadNames {{ "CHARGER NAM A", "CHARGER NAM B", "CHARGER IR A", "CHARGER IR B" }};
     for (int i = 0; i < 4; ++i)
     {
@@ -258,16 +336,16 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
     };
     createSliders(masterSliders, masterCaptions, masterAttach,
                   {{"input","nammix","irmix","output"}},
-                  {{"ENTRÉE","MIX NAM A/B","MIX IR A/B","SORTIE"}});
+                  {{libertyText::u8("ENTRÉE"),"MIX NAM A/B","MIX IR A/B","SORTIE"}});
     createSliders(ampSliders, ampCaptions, ampAttach,
                   {{"bass","middle","treble","presence"}},
-                  {{"GRAVES","MÉDIUMS","AIGUS","PRÉSENCE"}});
+                  {{"GRAVES",libertyText::u8("MÉDIUMS"),"AIGUS",libertyText::u8("PRÉSENCE")}});
     createSliders(cabSliders, cabCaptions, cabAttach,
                   {{"irAGain","irBGain","cabHP","cabLP"}},
                   {{"NIVEAU IR A","NIVEAU IR B","COUPE-BAS","COUPE-HAUT"}});
     createSliders(fxSliders, fxCaptions, fxAttach,
                   {{"gateThreshold","delayMs","delayFeedback","delayMix"}},
-                  {{"SEUIL GATE","TEMPS DELAY","RÉINJECTION","MIX DELAY"}});
+                  {{"SEUIL GATE","TEMPS DELAY",libertyText::u8("RÉINJECTION"),"MIX DELAY"}});
     createSliders(micSliders, micCaptions, micAttach,
                   {{"micAOffset","micADistance","micBOffset","micBDistance"}},
                   {{"MICRO A - AXE","MICRO A - CM","MICRO B - AXE","MICRO B - CM"}});
@@ -315,7 +393,7 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
     feedback.setFont(juce::Font(juce::FontOptions(12.5f)));
     feedback.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(feedback);
-    feedback.setText("Interface guitare. Profils micro = simulation après IR, non mesure acoustique.", juce::dontSendNotification);
+    feedback.setText(libertyText::u8("Interface guitare. Profils micro = simulation après IR, non mesure acoustique."), juce::dontSendNotification);
     setSize(1560, 980);
     setResizable(true, true);
     setResizeLimits(1370, 930, 1860, 1200);
@@ -424,7 +502,7 @@ void LibertyNeuralMatrixAudioProcessorEditor::loadFile(int slot)
 {
     juce::Component::SafePointer<LibertyNeuralMatrixAudioProcessorEditor> safe(this);
     chooser[(size_t)slot] = std::make_unique<juce::FileChooser>(
-        slot < 2 ? "Choisir une capture NAM" : "Choisir une réponse impulsionnelle WAV",
+        slot < 2 ? "Choisir une capture NAM" : libertyText::u8("Choisir une réponse impulsionnelle WAV"),
         juce::File {}, slot < 2 ? "*.nam" : "*.wav");
     chooser[(size_t)slot]->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -436,9 +514,10 @@ void LibertyNeuralMatrixAudioProcessorEditor::loadFile(int slot)
             const auto result = safe->processor.loadFile(slot, file);
             if (result.wasOk())
             {
-                safe->showFeedback("Chargement réussi : " + file.getFileName());
+                safe->showFeedback(libertyText::u8("Chargement réussi : ") + file.getFileName());
                 safe->refreshFromProcessor();
                 if (slot >= 2) safe->waveform->repaint();
+                safe->repaint(); // Update two NAM illustrations only after a successful load.
             }
             else safe->showFeedback("Erreur : " + result.getErrorMessage());
         });
@@ -591,21 +670,29 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
     if(page==Page::amp)
     {
         card(g,left,"AMPLIFICATEUR ET CAPTURES NAM");
-        card(g,right,"ÉGALISATION POST-NAM");
+        card(g,right,libertyText::u8("ÉGALISATION POST-NAM"));
         const int h = juce::jmax(200,left.getHeight()-210);
         const auto art = juce::Rectangle<int>(left.getX()+22,left.getY()+54,left.getWidth()-44,h);
         g.setColour(black);g.fillRoundedRectangle(art.toFloat(),9.0f);
         if(ampImage.isValid())
         {
             g.saveState();g.reduceClipRegion(art);
+            g.setOpacity(0.28f);
             g.drawImageWithin(ampImage,art.getX(),art.getY(),art.getWidth(),art.getHeight(),juce::RectanglePlacement::centred);
             g.restoreState();
         }
+        const auto headRegion = art.reduced(13, 6);
+        const int headGap = 12;
+        const int headWidth = (headRegion.getWidth() - headGap) / 2;
+        drawModelAmp(g, {headRegion.getX(), headRegion.getY(), headWidth, headRegion.getHeight()},
+                     processor.slotDisplayName(0), 0);
+        drawModelAmp(g, {headRegion.getX() + headWidth + headGap, headRegion.getY(), headWidth, headRegion.getHeight()},
+                     processor.slotDisplayName(1), 1);
         const int ay=left.getY()+h+72;
         panelLine(g,{left.getX()+19,ay,left.getWidth()-38,122});
-        caption(g,"Mélange entre deux captures - commandes automatisables.",
+        caption(g,libertyText::u8("Mélange entre deux captures - commandes automatisables."),
                 {right.getX()+29,right.getBottom()-116,right.getWidth()-58,21},13);
-        caption(g,"L'EQ agit après le modèle NAM, sans modifier ses poids.",
+        caption(g,libertyText::u8("L'EQ agit après le modèle NAM, sans modifier ses poids."),
                 {right.getX()+226,right.getBottom()-38,right.getWidth()-248,20},12);
     }
     else if(page==Page::cab)
@@ -623,9 +710,9 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
         }
         caption(g,"FORMES D'ONDE WAV : IR A (ambre) / IR B (cyan)",
                 {left.getX()+25,left.getY()+h+35,left.getWidth()-50,18},12,true);
-        caption(g,"IR WAV réelles - profils de micros simulés après la convolution.",
+        caption(g,libertyText::u8("IR WAV réelles - profils de micros simulés après la convolution."),
                 {right.getX()+25,right.getY()+48,right.getWidth()-50,19},12);
-        caption(g,"Le déplacement modifie le timbre, pas la position acoustique enregistrée.",
+        caption(g,libertyText::u8("Le déplacement modifie le timbre, pas la position acoustique enregistrée."),
                 {right.getX()+25,right.getY()+315,right.getWidth()-50,17},11);
     }
     else if(page==Page::fx)
@@ -633,23 +720,23 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
         card(g,left,"GATE ET BOOST");card(g,right,"DELAY STUDIO");
         caption(g,"Seuil du gate et boost fixe de +6 dB avant le NAM.",
                 {left.getX()+28,left.getY()+60,left.getWidth()-56,21},13);
-        caption(g,"Delay avec temps, réinjection et mélange après les IR.",
+        caption(g,libertyText::u8("Delay avec temps, réinjection et mélange après les IR."),
                 {right.getX()+28,right.getY()+60,right.getWidth()-56,21},13);
     }
     else
     {
-        card(g,left,"CONFIGURATION AUDIO");card(g,right,"MOTEUR ET COMPATIBILITÉ");
+        card(g,left,"CONFIGURATION AUDIO");card(g,right,libertyText::u8("MOTEUR ET COMPATIBILITÉ"));
         caption(g,"Activez ou contournez les sections ampli et baffle.",
                 {left.getX()+30,left.getY()+71,left.getWidth()-60,20},13);
-        caption(g,"Interface UTF-8 - accents français vérifiés.",
+        caption(g,libertyText::u8("Interface UTF-8 - accents français vérifiés."),
                 {right.getX()+30,right.getY()+82,right.getWidth()-60,23},13,true);
         caption(g,"Moteur JUCE + NeuralAmpModelerCore. Les profils micros",
                 {right.getX()+30,right.getY()+125,right.getWidth()-60,23},13);
-        caption(g,"sont des filtres après l'IR, pas des réponses mesurées.",
+        caption(g,libertyText::u8("sont des filtres après l'IR, pas des réponses mesurées."),
                 {right.getX()+30,right.getY()+151,right.getWidth()-60,23},13);
-        caption(g,"Échantillonnage hôte : " + juce::String(processor.getPreparedSampleRate(),0) + " Hz",
+        caption(g,libertyText::u8("Échantillonnage hôte : ") + juce::String(processor.getPreparedSampleRate(),0) + " Hz",
                 {right.getX()+30,right.getY()+199,right.getWidth()-60,24},13,true);
-        caption(g,"TONE3000 et interpolation d'IR multi-positions : à développer.",
+        caption(g,libertyText::u8("TONE3000 et interpolation d'IR multi-positions : à développer."),
                 {right.getX()+30,right.getY()+247,right.getWidth()-60,24},13);
     }
 }

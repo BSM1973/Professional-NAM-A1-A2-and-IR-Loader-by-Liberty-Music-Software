@@ -1,3 +1,8 @@
+## Correctifs v0.6
+- WaveNet enregistrement statique forcé + test automatique.
+- Français UTF-8 explicite dans JUCE; prévention des régressions.
+- Deux amplificateurs Liberty visuellement différents selon les captures NAM chargées.
+
 # Liberty Neural Matrix - Guitar Edition v0.5
 
 Liberty Music Software - AU/VST3/Standalone plugin, developed with JUCE 8 and NeuralAmpModelerCore.
