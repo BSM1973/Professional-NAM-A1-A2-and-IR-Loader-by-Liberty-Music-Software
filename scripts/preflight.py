@@ -72,8 +72,8 @@ for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
     for pattern in ['\ufffd', 'Ã©', 'Ã¨', 'Ãª', 'Ã ', 'â€™', 'â€œ', 'â€', '\u25a1']:
         if pattern in content:
             errors.append(f'Mojibake in {name}: {pattern!r}')
-# French-text regression guard: non-ASCII source string literals MUST go
-# through libertyText::u8, including strings introduced in future source files.
+# French-text regression guard: future non-ASCII source string literals MUST
+# use libertyText::u8 before reaching JUCE (including newly created C++ files).
 for path in sorted((root / 'Source').rglob('*.cpp')) + sorted((root / 'Source').rglob('*.h')):
     name = str(path.relative_to(root))
     if name == 'Source/ArtAssets.h':
@@ -82,14 +82,8 @@ for path in sorted((root / 'Source').rglob('*.cpp')) + sorted((root / 'Source').
     for match in re.finditer(r'"(?:\\.|[^"\\])*"', content):
         literal = match.group(0)
         if any(ord(c) > 127 for c in literal):
-            prefix = content[max(0,match.start()-65):match.start()]
-            if not re.search(r'libertyText::u8\s*\(\s*    print('\nPRE-FLIGHT FAILED: ' + ', '.join(errors), file=sys.stderr)
-    sys.exit(1)
-# Independent mathematical layout audit, no JUCE binaries required.
-import subprocess
-subprocess.run([sys.executable, str(root / 'scripts/check_geometry.py')], check=True)
-print('\nPRE-FLIGHT PASSED. NOTE: this does not compile or run DSP.')
-, prefix):
+            prefix = content[max(0, match.start()-65):match.start()]
+            if not re.search(r'libertyText::u8\s*\(\s*$', prefix):
                 errors.append(f'Raw non-ASCII literal in {name}: {literal[:80]}')
 if '$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>' not in cmake:
     errors.append('WHOLE_ARCHIVE missing: WaveNet/LSTM parsers could be stripped')

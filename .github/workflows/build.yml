@@ -1,5 +1,5 @@
 name: Liberty Neural Matrix - AU VST3 standalone
-# v0.5.1 MSVC C2026 image-literal fix; enforced by Python preflight before compilation.
+# v0.6.1 repair Unicode linter syntax; validate before compiling the NAM registry.
 
 # Exactly one bootstrap run when this workflow first reaches the main branch.
 # Further code pushes do not automatically consume CI minutes.
