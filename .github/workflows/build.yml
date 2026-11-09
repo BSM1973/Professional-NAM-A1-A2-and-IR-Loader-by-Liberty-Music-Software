@@ -58,12 +58,34 @@ jobs:
           $buildDir = Join-Path $env:RUNNER_TEMP 'lnm-b'
           cmake --build "$buildDir" --config Release --parallel 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Upload binaries (macOS)
-        if: runner.os != 'Windows'
+      # upload-artifact directly flattens Unix executable permissions and can
+      # break macOS .app/.vst3/.component bundles. Pack them with macOS ditto first.
+      - name: Validate and package macOS bundles with preserved permissions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$PWD/build/LibertyNeuralMatrix_artefacts/Release"
+          exe="$release/Standalone/Liberty Neural Matrix.app/Contents/MacOS/Liberty Neural Matrix"
+          test -x "$exe" || { echo "::error::Standalone executable missing or not executable"; exit 1; }
+          test -d "$release/AU/Liberty Neural Matrix.component"
+          test -d "$release/VST3/Liberty Neural Matrix.vst3"
+          echo "Standalone architecture: $(/usr/bin/lipo -archs "$exe")"
+          /usr/bin/lipo -archs "$exe" | /usr/bin/grep -qw arm64
+          package="$RUNNER_TEMP/Liberty-Neural-Matrix-macOS-arm64"
+          mkdir -p "$package"
+          for format in Standalone AU VST3; do
+            /usr/bin/ditto "$release/$format" "$package/$format"
+          done
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$package" "$PWD/Liberty-Neural-Matrix-macOS-arm64.zip"
+          /usr/bin/unzip -tq "$PWD/Liberty-Neural-Matrix-macOS-arm64.zip"
+          /bin/ls -lh "$PWD/Liberty-Neural-Matrix-macOS-arm64.zip"
+      - name: Upload preserved macOS ZIP
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: build/LibertyNeuralMatrix_artefacts/
+          path: Liberty-Neural-Matrix-macOS-arm64.zip
           if-no-files-found: error
           retention-days: 14
       - name: Upload binaries (Windows)
