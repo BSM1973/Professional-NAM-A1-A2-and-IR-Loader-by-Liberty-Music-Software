@@ -39,16 +39,16 @@ inline void paint(juce::Graphics& g, juce::Rectangle<int> bounds, int family,
 
     // Per-family chassis/fascia/grille palettes and physically distinct layouts.
     const std::array<juce::Colour, 19> chassis {{
-        0xff262424, 0xff25201b, 0xff191817, 0xff222629, 0xff1c2127,
-        0xff272729, 0xffb89a62, 0xff362b2c, 0xff26374b, 0xff292725,
-        0xffb74b18, 0xff202124, 0xff4b3527, 0xff252b33, 0xff1b222c,
-        0xff151a1e, 0xff282a2d, 0xff845b38, 0xff1c1d21
+        juce::Colour(0xff262424), juce::Colour(0xff25201b), juce::Colour(0xff191817), juce::Colour(0xff222629), juce::Colour(0xff1c2127),
+        juce::Colour(0xff272729), juce::Colour(0xffb89a62), juce::Colour(0xff362b2c), juce::Colour(0xff26374b), juce::Colour(0xff292725),
+        juce::Colour(0xffb74b18), juce::Colour(0xff202124), juce::Colour(0xff4b3527), juce::Colour(0xff252b33), juce::Colour(0xff1b222c),
+        juce::Colour(0xff151a1e), juce::Colour(0xff282a2d), juce::Colour(0xff845b38), juce::Colour(0xff1c1d21)
     }};
     const std::array<juce::Colour, 19> faces {{
-        0xff66605b, 0xffcaa26e, 0xffa78b5d, 0xff777f89, 0xffb1b7be,
-        0xff302e2e, 0xffe1bd7f, 0xffbcb0a0, 0xffc0c4ce, 0xffb5a078,
-        0xffead2a0, 0xffebebdf, 0xffd1b38a, 0xffb2b9c1, 0xff90949c,
-        0xff393e41, 0xffb1b3b6, 0xffd2ac7b, 0xff9f9ca1
+        juce::Colour(0xff66605b), juce::Colour(0xffcaa26e), juce::Colour(0xffa78b5d), juce::Colour(0xff777f89), juce::Colour(0xffb1b7be),
+        juce::Colour(0xff302e2e), juce::Colour(0xffe1bd7f), juce::Colour(0xffbcb0a0), juce::Colour(0xffc0c4ce), juce::Colour(0xffb5a078),
+        juce::Colour(0xffead2a0), juce::Colour(0xffebebdf), juce::Colour(0xffd1b38a), juce::Colour(0xffb2b9c1), juce::Colour(0xff90949c),
+        juce::Colour(0xff393e41), juce::Colour(0xffb1b3b6), juce::Colour(0xffd2ac7b), juce::Colour(0xff9f9ca1)
     }};
     const auto shell = chassis[(size_t)family];
     const auto face = faces[(size_t)family];

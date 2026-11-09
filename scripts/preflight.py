@@ -70,6 +70,14 @@ for asset_name in ('ampJpegChunks', 'cabJpegChunks'):
     except (ValueError, base64.binascii.Error):
         errors.append(f'Invalid Base64: {asset_name}')
 
+# Explicit JUCE colour construction: juce::Colour(uint32) is explicit in JUCE 8.
+# Reject list-initialisation of Colour arrays from integer literals (fails Clang/MSVC).
+artwork = (root / 'Source/AmpArtwork.h').read_text(encoding='utf-8')
+for palette in ('chassis', 'faces'):
+    palette_match = re.search(r'const std::array<juce::Colour, 19> ' + palette + r'\\s*\\{\\{(.*?)\\}\\};', artwork, re.S)
+    if palette_match is None or len(re.findall(r'juce::Colour\\(0x[0-9a-fA-F]{8}\\)', palette_match.group(1))) != 19:
+        errors.append('JUCE explicit colour constructors missing: ' + palette)
+
 # Check common mojibake and replacement glyphs, without scanning Base64 image resources.
 for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
              'Source/PluginProcessor.cpp', 'Source/PluginProcessor.h']:
