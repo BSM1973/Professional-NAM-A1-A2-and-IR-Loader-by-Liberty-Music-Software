@@ -3,16 +3,16 @@
 #include <get_dsp.h>
 #include <array>
 #include <memory>
+#include <atomic>
 #include <vector>
 
-class LibertyNeuralMatrixAudioProcessor final
-    : public juce::AudioProcessor, private juce::AsyncUpdater
+class LibertyNeuralMatrixAudioProcessor final : public juce::AudioProcessor, private juce::AsyncUpdater
 {
 public:
     LibertyNeuralMatrixAudioProcessor();
     ~LibertyNeuralMatrixAudioProcessor() override = default;
 
-    void prepareToPlay(double sampleRate, int blockSize) override;
+    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     juce::AudioProcessorEditor* createEditor() override;
@@ -31,22 +31,34 @@ public:
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
 
+    // Slots 0/1 are .nam, slots 2/3 are .wav. These operations run off the audio callback.
     juce::Result loadFile(int slot, const juce::File& file);
     juce::String slotDisplayName(int slot) const;
+    double getPreparedSampleRate() const noexcept { return preparedRateAtomic.load(); }
     juce::AudioProcessorValueTreeState state;
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout parameters();
     void handleAsyncUpdate() override;
-
     juce::CriticalSection modelMutex;
     std::array<std::unique_ptr<nam::DSP>, 2> models;
     std::array<juce::String, 4> slotPaths;
     std::array<juce::dsp::Convolution, 2> irs;
-    std::array<bool, 2> irLoaded {{false, false}};
+    std::array<bool, 2> irLoaded {{ false, false }};
+
     juce::AudioBuffer<float> irScratchA, irScratchB;
     std::vector<float> mono, namA, namB;
     juce::SmoothedValue<float> inputGain, outputGain, namBlend, irBlend;
+    struct ToneState
+    {
+        float low = 0, midLower = 0, midUpper = 0, upper = 0, presence = 0;
+        float cabinetHP = 0, cabinetLP = 0;
+    };
+    std::array<ToneState, 2> toneStates;
+    std::array<std::vector<float>, 2> delayLines;
+    size_t delayPosition = 0;
+    float gateEnvelope = 0.0f, gateGain = 1.0f;
+    std::atomic<double> preparedRateAtomic { 48000.0 };
     double preparedRate = 48000.0;
     int maxBlock = 512;
 

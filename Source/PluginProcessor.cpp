@@ -1,6 +1,5 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include <algorithm>
 #include <cmath>
 #include <filesystem>
 
@@ -9,49 +8,92 @@ constexpr auto* kInput = "input";
 constexpr auto* kOutput = "output";
 constexpr auto* kNAMMix = "nammix";
 constexpr auto* kIRMix = "irmix";
+constexpr float pi = 3.14159265358979323846f;
+float onePole(float frequency, double sampleRate)
+{
+    return 1.0f - std::exp(-2.0f * pi * frequency / static_cast<float>(juce::jmax(1.0, sampleRate)));
+}
+float dbToGain(float value) { return juce::Decibels::decibelsToGain(value); }
+
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout LibertyNeuralMatrixAudioProcessor::parameters()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> p;
-    p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kInput, 1}, "Entrée (dB)", -24.0f, 24.0f, 0.0f));
-    p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kOutput, 1}, "Sortie (dB)", -24.0f, 24.0f, 0.0f));
+    p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kInput, 1}, "Input (dB)", -24.0f, 24.0f, 0.0f));
+    p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kOutput, 1}, "Output (dB)", -24.0f, 24.0f, 0.0f));
     p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kNAMMix, 1}, "NAM A/B", 0.0f, 1.0f, 0.0f));
     p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{kIRMix, 1}, "IR A/B", 0.0f, 1.0f, 0.0f));
+    auto addFloat = [&](const char* id, const char* name, float min, float max, float initial)
+    {
+        p.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, min, max, initial));
+    };
+    auto addBool = [&](const char* id, const char* name, bool initial)
+    {
+        p.push_back(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{id, 1}, name, initial));
+    };
+    // Tone controls are real post-NAM filters, not exposed as controls of a captured amplifier.
+    addFloat("bass", "Graves post NAM (dB)", -12.0f, 12.0f, 0.0f);
+    addFloat("middle", "Médiums post NAM (dB)", -12.0f, 12.0f, 0.0f);
+    addFloat("treble", "Aigus post NAM (dB)", -12.0f, 12.0f, 0.0f);
+    addFloat("presence", "Présence post NAM (dB)", -12.0f, 12.0f, 0.0f);
+    addBool("ampOn", "Activer section ampli", true);
+    addBool("cabOn", "Activer section baffle", true);
+    addFloat("irAGain", "Niveau IR A (dB)", -24.0f, 6.0f, 0.0f);
+    addFloat("irBGain", "Niveau IR B (dB)", -24.0f, 6.0f, 0.0f);
+    addBool("irAPhase", "Inverser polarité IR A", false);
+    addBool("irBPhase", "Inverser polarité IR B", false);
+    addFloat("cabHP", "Coupe-bas baffle (Hz)", 20.0f, 250.0f, 70.0f);
+    addFloat("cabLP", "Coupe-haut baffle (Hz)", 2500.0f, 18000.0f, 12000.0f);
+    addBool("gateOn", "Activer gate", false);
+    addFloat("gateThreshold", "Seuil gate (dBFS)", -80.0f, -20.0f, -55.0f);
+    addBool("boostOn", "Boost pré NAM +6 dB", false);
+    addBool("delayOn", "Activer delay", false);
+    addFloat("delayMs", "Temps delay (ms)", 60.0f, 1200.0f, 320.0f);
+    addFloat("delayFeedback", "Feedback delay", 0.0f, 0.85f, 0.30f);
+    addFloat("delayMix", "Mix delay", 0.0f, 0.70f, 0.20f);
     return {p.begin(), p.end()};
 }
 
 LibertyNeuralMatrixAudioProcessor::LibertyNeuralMatrixAudioProcessor()
-    : juce::AudioProcessor(juce::AudioProcessor::BusesProperties()
-          .withInput("Entrée", juce::AudioChannelSet::stereo(), true)
-          .withOutput("Sortie", juce::AudioChannelSet::stereo(), true)),
-      state(*this, nullptr, "LIBERTY_STATE", parameters())
-{
-}
+ : juce::AudioProcessor(juce::AudioProcessor::BusesProperties()
+       .withInput("Entrée", juce::AudioChannelSet::stereo(), true)
+       .withOutput("Sortie", juce::AudioChannelSet::stereo(), true)),
+   state(*this, nullptr, "LIBERTY_STATE", parameters())
+{}
 
 bool LibertyNeuralMatrixAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout) const
 {
-    const auto in = layout.getMainInputChannelSet();
-    const auto out = layout.getMainOutputChannelSet();
+    auto in = layout.getMainInputChannelSet();
+    auto out = layout.getMainOutputChannelSet();
     return (in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo())
         && (out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo());
 }
 
 void LibertyNeuralMatrixAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Preparation is called by the host, never from processBlock.
+    // Never allocate in the audio callback. Models are reset on the host preparation thread.
     const juce::ScopedLock lock(modelMutex);
     preparedRate = sampleRate;
+    preparedRateAtomic.store(sampleRate, std::memory_order_relaxed);
+    gateEnvelope = 0.0f;
+    gateGain = 1.0f;
+    toneStates = {};
+    delayPosition = 0;
+    const size_t delaySize = static_cast<size_t>(std::ceil(1.25 * sampleRate)) + 16u;
+    for (auto& line : delayLines) line.assign(delaySize, 0.0f);
     maxBlock = juce::jmax(64, samplesPerBlock);
-    mono.resize((size_t)maxBlock);
-    namA.resize((size_t)maxBlock);
-    namB.resize((size_t)maxBlock);
+    mono.resize((size_t) maxBlock);
+    namA.resize((size_t) maxBlock);
+    namB.resize((size_t) maxBlock);
     irScratchA.setSize(2, maxBlock);
     irScratchB.setSize(2, maxBlock);
-    juce::dsp::ProcessSpec spec{sampleRate, (juce::uint32)maxBlock, 2};
+
+    juce::dsp::ProcessSpec spec{sampleRate, (juce::uint32) maxBlock, 2};
     for (auto& ir : irs) ir.prepare(spec);
     for (auto& model : models)
         if (model) model->Reset(sampleRate, maxBlock);
+
     for (auto* smoothed : {&inputGain, &outputGain, &namBlend, &irBlend})
         smoothed->reset(sampleRate, 0.025);
     inputGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(state.getRawParameterValue(kInput)->load()));
@@ -66,13 +108,14 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
         return juce::Result::fail("Fichier introuvable.");
     const auto extension = file.getFileExtension().toLowerCase();
     if ((slot < 2 && extension != ".nam") || (slot >= 2 && extension != ".wav"))
-        return juce::Result::fail("Extension incompatible avec cet emplacement.");
+        return juce::Result::fail("Extension incompatible avec ce slot.");
 
     if (slot < 2)
     {
         try
         {
-            // Decode outside the audio callback. Future: fully asynchronous loader.
+            // Expensive loading and neural pre-warming happen on the UI thread, not in processBlock.
+            // Preserve French accents and other Unicode characters in model paths on Windows.
            #if JUCE_WINDOWS
             const std::filesystem::path nativePath(file.getFullPathName().toWideCharPointer());
            #else
@@ -80,35 +123,35 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
            #endif
             auto replacement = nam::get_dsp(nativePath);
             if (!replacement || replacement->NumInputChannels() != 1 || replacement->NumOutputChannels() != 1)
-                return juce::Result::fail("Ce prototype nécessite un modèle NAM mono.");
-            const auto rate = replacement->GetExpectedSampleRate();
-            if (rate > 0 && std::abs(rate - preparedRate) > 1.0)
-                return juce::Result::fail("Fréquence NAM différente de celle du projet. Utiliser la fréquence native.");
+                return juce::Result::fail("Ce prototype exige un NAM mono entrée/sortie.");
+
+            auto expectedRate = replacement->GetExpectedSampleRate();
+            if (expectedRate > 0 && std::abs(expectedRate - preparedRate) > 1.0)
+                return juce::Result::fail("Fréquence du NAM différente du projet. Utiliser le taux natif (souvent 48 kHz). ");
             replacement->Reset(preparedRate, maxBlock);
             std::unique_ptr<nam::DSP> previous;
             {
                 const juce::ScopedLock lock(modelMutex);
-                previous = std::move(models[(size_t)slot]);
-                models[(size_t)slot] = std::move(replacement);
-                slotPaths[(size_t)slot] = file.getFullPathName();
+                previous = std::move(models[(size_t) slot]);
+                models[(size_t) slot] = std::move(replacement);
+                slotPaths[(size_t) slot] = file.getFullPathName();
             }
-            // Destruct old model after releasing the audio mutex.
+            // Destroy old model only after releasing the audio thread lock.
         }
         catch (const std::exception& e)
         {
-            return juce::Result::fail("Erreur de lecture NAM : " + juce::String(e.what()));
+            return juce::Result::fail("Impossible de charger le modèle NAM : " + juce::String(e.what()));
         }
     }
     else
     {
+        // JUCE convolution resamples and prepares the IR internally. No file I/O in processBlock.
         const int idx = slot - 2;
-        irs[(size_t)idx].loadImpulseResponse(
-            file, juce::dsp::Convolution::Stereo::yes,
-            juce::dsp::Convolution::Trim::yes, 0,
-            juce::dsp::Convolution::Normalise::no);
+        irs[(size_t) idx].loadImpulseResponse(file, juce::dsp::Convolution::Stereo::yes,
+             juce::dsp::Convolution::Trim::yes, 0, juce::dsp::Convolution::Normalise::no);
         const juce::ScopedLock lock(modelMutex);
-        slotPaths[(size_t)slot] = file.getFullPathName();
-        irLoaded[(size_t)idx] = true;
+        slotPaths[(size_t) slot] = file.getFullPathName();
+        irLoaded[(size_t) idx] = true;
     }
     return juce::Result::ok();
 }
@@ -117,9 +160,7 @@ juce::String LibertyNeuralMatrixAudioProcessor::slotDisplayName(int slot) const
 {
     if (!juce::isPositiveAndBelow(slot, 4)) return {};
     const juce::ScopedLock lock(const_cast<juce::CriticalSection&>(modelMutex));
-    return slotPaths[(size_t)slot].isEmpty()
-        ? "Aucun fichier"
-        : juce::File(slotPaths[(size_t)slot]).getFileName();
+    return slotPaths[(size_t) slot].isEmpty() ? "Charger un fichier" : juce::File(slotPaths[(size_t) slot]).getFileName();
 }
 
 void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -127,72 +168,123 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
     juce::ScopedNoDenormals noDenormals;
     const int nCh = buffer.getNumChannels();
     const int nIn = juce::jmin(getTotalNumInputChannels(), nCh);
-    if (nCh == 0 || nIn == 0) { buffer.clear(); return; }
+    if (nIn == 0 || nCh == 0) { buffer.clear(); return; }
 
-    inputGain.setTargetValue(juce::Decibels::decibelsToGain(state.getRawParameterValue(kInput)->load()));
-    outputGain.setTargetValue(juce::Decibels::decibelsToGain(state.getRawParameterValue(kOutput)->load()));
-    namBlend.setTargetValue(state.getRawParameterValue(kNAMMix)->load());
-    irBlend.setTargetValue(state.getRawParameterValue(kIRMix)->load());
+    const auto value = [this](const char* id) { return state.getRawParameterValue(id)->load(); };
+    inputGain.setTargetValue(dbToGain(value(kInput)));
+    outputGain.setTargetValue(dbToGain(value(kOutput)));
+    namBlend.setTargetValue(value(kNAMMix));
+    irBlend.setTargetValue(value(kIRMix));
 
-    // Prototype: avoid blocking audio if UI loading holds the lock.
+    const bool ampOn = value("ampOn") > 0.5f;
+    const bool cabOn = value("cabOn") > 0.5f;
+    const bool gateOn = value("gateOn") > 0.5f;
+    const bool boostOn = value("boostOn") > 0.5f;
+    const bool delayOn = value("delayOn") > 0.5f;
+    const float gateThreshold = dbToGain(value("gateThreshold"));
+    const float boostGain = boostOn ? dbToGain(6.0f) : 1.0f;
+    const float bassGain = dbToGain(value("bass"));
+    const float middleGain = dbToGain(value("middle"));
+    const float trebleGain = dbToGain(value("treble"));
+    const float presenceGain = dbToGain(value("presence"));
+    const float irAGain = dbToGain(value("irAGain")) * (value("irAPhase") > 0.5f ? -1.0f : 1.0f);
+    const float irBGain = dbToGain(value("irBGain")) * (value("irBPhase") > 0.5f ? -1.0f : 1.0f);
+    const float hpCoeff = onePole(value("cabHP"), preparedRate);
+    const float lpCoeff = onePole(value("cabLP"), preparedRate);
+    const float lowCoeff = onePole(170.0f, preparedRate);
+    const float midLowCoeff = onePole(350.0f, preparedRate);
+    const float midHighCoeff = onePole(1900.0f, preparedRate);
+    const float upperCoeff = onePole(1800.0f, preparedRate);
+    const float presenceCoeff = onePole(4300.0f, preparedRate);
+    const float feedback = value("delayFeedback");
+    const float delayMix = delayOn ? value("delayMix") : 0.0f;
+    const size_t delaySize = delayLines[0].size();
+    const size_t delaySamples = juce::jlimit<size_t>(1, delaySize > 1 ? delaySize - 1 : 1,
+                                    static_cast<size_t>(value("delayMs") * preparedRate * 0.001));
+    const float attack = onePole(85.0f, preparedRate);
+    const float release = onePole(5.0f, preparedRate);
+    const float gateSmoothing = onePole(45.0f, preparedRate);
+
+    // No file I/O, model creation, memory allocation or coefficient objects in audio callback.
     juce::ScopedTryLock lock(modelMutex);
-    if (!lock.isLocked()) return;
+    if (!lock.isLocked()) return; // Existing nonblocking fallback during a model swap.
 
     for (int offset = 0; offset < buffer.getNumSamples(); offset += maxBlock)
     {
         const int count = juce::jmin(maxBlock, buffer.getNumSamples() - offset);
-        const float* l = buffer.getReadPointer(0, offset);
-        const float* r = nIn > 1 ? buffer.getReadPointer(1, offset) : nullptr;
-        for (int i = 0; i < count; ++i)
-            mono[(size_t)i] = (r ? 0.5f * (l[i] + r[i]) : l[i]) * inputGain.getNextValue();
+        const auto* l = buffer.getReadPointer(0, offset);
+        const auto* r = nIn > 1 ? buffer.getReadPointer(1, offset) : nullptr;
 
-        auto renderNAM = [&](int idx, std::vector<float>& dst)
+        for (int i = 0; i < count; ++i)
         {
-            if (models[(size_t)idx])
-            {
-                float* inputs[] = {mono.data()};
-                float* outputs[] = {dst.data()};
-                models[(size_t)idx]->process(inputs, outputs, count);
-            }
-            else std::copy_n(mono.data(), count, dst.data());
+            const float dry = r != nullptr ? 0.5f * (l[i] + r[i]) : l[i];
+            const float absolute = std::abs(dry);
+            gateEnvelope += (absolute > gateEnvelope ? attack : release) * (absolute - gateEnvelope);
+            const float desiredGain = (!gateOn || gateEnvelope >= gateThreshold) ? 1.0f : 0.0f;
+            gateGain += gateSmoothing * (desiredGain - gateGain);
+            mono[(size_t) i] = dry * gateGain * boostGain * inputGain.getNextValue();
+        }
+
+        const bool loadedA = ampOn && (bool) models[0];
+        const bool loadedB = ampOn && (bool) models[1];
+        auto renderNAM = [&](int idx, std::vector<float>& destination)
+        {
+            float* inputs[] { mono.data() };
+            float* outputs[] { destination.data() };
+            models[(size_t) idx]->process(inputs, outputs, count);
         };
-        const bool loadedA = (bool)models[0], loadedB = (bool)models[1];
         if (loadedA) renderNAM(0, namA);
         if (loadedB) renderNAM(1, namB);
+
         for (int i = 0; i < count; ++i)
         {
             const float t = namBlend.getNextValue();
-            float x = mono[(size_t)i];
-            if (loadedA && loadedB)
-                x = (1.0f - t) * namA[(size_t)i] + t * namB[(size_t)i];
-            else if (loadedA)
-                x = namA[(size_t)i];
-            else if (loadedB)
-                x = namB[(size_t)i];
+            float monoResult = mono[(size_t) i];
+            if (loadedA && loadedB) monoResult = (1.0f - t) * namA[(size_t) i] + t * namB[(size_t) i];
+            else if (loadedA) monoResult = namA[(size_t) i];
+            else if (loadedB) monoResult = namB[(size_t) i];
+
             for (int ch = 0; ch < nCh; ++ch)
+            {
+                float x = monoResult;
+                if (ampOn)
+                {
+                    auto& eq = toneStates[(size_t) juce::jmin(ch, 1)];
+                    eq.low += lowCoeff * (x - eq.low);
+                    eq.midLower += midLowCoeff * (x - eq.midLower);
+                    eq.midUpper += midHighCoeff * (x - eq.midUpper);
+                    eq.upper += upperCoeff * (x - eq.upper);
+                    eq.presence += presenceCoeff * (x - eq.presence);
+                    x += (bassGain - 1.0f) * eq.low
+                       + (middleGain - 1.0f) * (eq.midUpper - eq.midLower)
+                       + (trebleGain - 1.0f) * (x - eq.upper)
+                       + (presenceGain - 1.0f) * (x - eq.presence);
+                }
                 buffer.setSample(ch, offset + i, x);
+            }
         }
 
-        const bool hasIRA = irLoaded[0], hasIRB = irLoaded[1];
+        const bool hasIRA = cabOn && irLoaded[0];
+        const bool hasIRB = cabOn && irLoaded[1];
         if (hasIRA || hasIRB)
         {
             for (int ch = 0; ch < 2; ++ch)
             {
-                const int sourceCh = juce::jmin(ch, nCh - 1);
-                if (hasIRA) irScratchA.copyFrom(ch, 0, buffer, sourceCh, offset, count);
-                if (hasIRB) irScratchB.copyFrom(ch, 0, buffer, sourceCh, offset, count);
+                const int src = juce::jmin(ch, nCh - 1);
+                if (hasIRA) irScratchA.copyFrom(ch, 0, buffer, src, offset, count);
+                if (hasIRB) irScratchB.copyFrom(ch, 0, buffer, src, offset, count);
             }
             if (hasIRA)
             {
                 juce::dsp::AudioBlock<float> block(irScratchA);
-                auto sub = block.getSubBlock(0, (size_t)count);
+                auto sub = block.getSubBlock(0, (size_t) count);
                 juce::dsp::ProcessContextReplacing<float> context(sub);
                 irs[0].process(context);
             }
             if (hasIRB)
             {
                 juce::dsp::AudioBlock<float> block(irScratchB);
-                auto sub = block.getSubBlock(0, (size_t)count);
+                auto sub = block.getSubBlock(0, (size_t) count);
                 juce::dsp::ProcessContextReplacing<float> context(sub);
                 irs[1].process(context);
             }
@@ -201,10 +293,14 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
                 const float t = irBlend.getNextValue();
                 for (int ch = 0; ch < nCh; ++ch)
                 {
-                    const float a = hasIRA ? irScratchA.getSample(ch, i) : 0.0f;
-                    const float b = hasIRB ? irScratchB.getSample(ch, i) : 0.0f;
-                    const float result = (hasIRA && hasIRB) ? a * (1.0f - t) + b * t : hasIRA ? a : b;
-                    buffer.setSample(ch, offset + i, result);
+                    const float a = hasIRA ? irScratchA.getSample(ch, i) * irAGain : 0.0f;
+                    const float b = hasIRB ? irScratchB.getSample(ch, i) * irBGain : 0.0f;
+                    float y = hasIRA && hasIRB ? a * (1.0f - t) + b * t : hasIRA ? a : b;
+                    auto& eq = toneStates[(size_t) juce::jmin(ch, 1)];
+                    eq.cabinetHP += hpCoeff * (y - eq.cabinetHP);
+                    y -= eq.cabinetHP;
+                    eq.cabinetLP += lpCoeff * (y - eq.cabinetLP);
+                    buffer.setSample(ch, offset + i, eq.cabinetLP);
                 }
             }
         }
@@ -212,9 +308,21 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
 
         for (int i = 0; i < count; ++i)
         {
-            const float gain = outputGain.getNextValue();
+            const float outGain = outputGain.getNextValue();
             for (int ch = 0; ch < nCh; ++ch)
-                buffer.setSample(ch, offset + i, buffer.getSample(ch, offset + i) * gain);
+            {
+                float x = buffer.getSample(ch, offset + i);
+                if (delaySize > 0)
+                {
+                    auto& line = delayLines[(size_t) juce::jmin(ch, 1)];
+                    const size_t readPosition = (delayPosition + delaySize - delaySamples) % delaySize;
+                    const float delayed = line[readPosition];
+                    line[delayPosition] = delayOn ? (x + delayed * feedback) : 0.0f;
+                    x = x * (1.0f - delayMix) + delayed * delayMix;
+                }
+                buffer.setSample(ch, offset + i, x * outGain);
+            }
+            if (delaySize > 0 && ++delayPosition >= delaySize) delayPosition = 0;
         }
     }
 }
@@ -224,43 +332,43 @@ void LibertyNeuralMatrixAudioProcessor::getStateInformation(juce::MemoryBlock& d
     auto tree = state.copyState();
     {
         const juce::ScopedLock lock(modelMutex);
-        for (int i = 0; i < 4; ++i)
-            tree.setProperty("path" + juce::String(i), slotPaths[(size_t)i], nullptr);
+        for (int i = 0; i < 4; ++i) tree.setProperty("path" + juce::String(i), slotPaths[(size_t) i], nullptr);
     }
-    if (auto xml = tree.createXml()) copyXmlToBinary(*xml, destination);
+    auto xml = tree.createXml();
+    if (xml) copyXmlToBinary(*xml, destination);
 }
 
-void LibertyNeuralMatrixAudioProcessor::setStateInformation(const void* data, int size)
+void LibertyNeuralMatrixAudioProcessor::setStateInformation(const void* source, int size)
 {
-    if (auto xml = getXmlFromBinary(data, size))
+    if (auto xml = getXmlFromBinary(source, size))
         if (auto tree = juce::ValueTree::fromXml(*xml); tree.isValid())
         {
             state.replaceState(tree);
             {
                 const juce::ScopedLock lock(modelMutex);
                 for (int i = 0; i < 4; ++i)
-                    slotPaths[(size_t)i] = tree.getProperty("path" + juce::String(i)).toString();
+                    slotPaths[(size_t) i] = tree.getProperty("path" + juce::String(i)).toString();
             }
-            triggerAsyncUpdate();
+            triggerAsyncUpdate(); // Never decode NAM/IR inside DAW state callback.
         }
 }
 
 void LibertyNeuralMatrixAudioProcessor::handleAsyncUpdate()
 {
-    std::array<juce::String, 4> paths;
+    std::array<juce::String,4> paths;
     {
         const juce::ScopedLock lock(modelMutex);
         paths = slotPaths;
     }
     for (int i = 0; i < 4; ++i)
-        if (paths[(size_t)i].isNotEmpty())
-            (void)loadFile(i, juce::File(paths[(size_t)i]));
+        if (paths[(size_t)i].isNotEmpty()) (void) loadFile(i, juce::File(paths[(size_t) i]));
 }
 
 juce::AudioProcessorEditor* LibertyNeuralMatrixAudioProcessor::createEditor()
 {
     return new LibertyNeuralMatrixAudioProcessorEditor(*this);
 }
+
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new LibertyNeuralMatrixAudioProcessor();

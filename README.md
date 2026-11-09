@@ -67,3 +67,11 @@ spctl -a -vv "/Applications/Liberty Neural Matrix.app"
 
 A failed Gatekeeper check is expected for a development build without a trusted Developer ID.
 Distribution to customers requires signing with Liberty's Apple Developer ID and notarization.
+
+
+## Guitar Edition v0.4
+The AMPLI, BAFFLES, EFFETS and RÉGLAGES pages now use host-automatable audio parameters.
+New post-NAM tone EQ, independent cabinet IR levels and polarity, HP/LP filters,
+pre-NAM gate/boost and post-cab delay. This is beta DSP: test real model loading,
+buffer sizes and session state in actual DAWs before using in production.
+No TONE3000 integration, automatic IR phase alignment, or premium preset browser is claimed.

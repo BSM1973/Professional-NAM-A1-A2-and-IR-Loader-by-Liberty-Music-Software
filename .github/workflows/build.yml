@@ -96,3 +96,5 @@ jobs:
           path: ${{ runner.temp }}/lnm-b/LibertyNeuralMatrix_artefacts/
           if-no-files-found: error
           retention-days: 14
+
+# v0.4 Guitar Edition: single batched source/UI/DSP build verification
