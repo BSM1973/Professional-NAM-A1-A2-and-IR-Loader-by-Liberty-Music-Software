@@ -78,6 +78,11 @@ for palette in ('chassis', 'faces'):
     if palette_match is None or len(re.findall(r'juce::Colour\(0x[0-9a-fA-F]{8}\)', palette_match.group(1))) != 19:
         errors.append('JUCE explicit colour constructors missing: ' + palette)
 
+# JUCE Rectangle<float> has getX()/getY(), not getLeft()/getTop().
+# Keep this regression check before the local and CI compilation stages.
+if re.search(r'\b(?:grille|facePlate|front|outer)\.get(?:Left|Top)\s*\(', artwork):
+    errors.append('Invalid JUCE Rectangle accessor in Source/AmpArtwork.h')
+
 # Check common mojibake and replacement glyphs, without scanning Base64 image resources.
 for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
              'Source/PluginProcessor.cpp', 'Source/PluginProcessor.h']:

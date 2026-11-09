@@ -110,9 +110,9 @@ inline void paint(juce::Graphics& g, juce::Rectangle<int> bounds, int family,
     {
         for (float y=-grille.getWidth();y<grille.getHeight()+grille.getWidth();y+=10.0f)
         {
-            g.drawLine(grille.getLeft(), grille.getTop()+y,
-                       grille.getRight(), grille.getTop()+y+grille.getWidth()*0.22f,0.8f);
-            g.drawLine(grille.getLeft(), grille.getBottom()-y,
+            g.drawLine(grille.getX(), grille.getY()+y,
+                       grille.getRight(), grille.getY()+y+grille.getWidth()*0.22f,0.8f);
+            g.drawLine(grille.getX(), grille.getBottom()-y,
                        grille.getRight(), grille.getBottom()-y-grille.getWidth()*0.22f,0.8f);
         }
     }
