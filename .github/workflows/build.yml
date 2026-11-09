@@ -34,14 +34,43 @@ jobs:
         uses: actions/checkout@v4
       - name: Preflight checks
         run: python scripts/preflight.py
-      - name: Configure Release
+      # Windows GitHub workspace paths repeat the long repository name.
+      # JUCE's nested examples then exceed Windows MAX_PATH during git checkout.
+      # Put both build and FetchContent worktrees under short RUNNER_TEMP paths.
+      - name: Configure Release (macOS)
+        if: runner.os != 'Windows'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Compile
+      - name: Configure Release (Windows short paths)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP 'lnm-b'
+          $depsDir = Join-Path $env:RUNNER_TEMP 'lnm-d'
+          cmake -S . -B "$buildDir" -A x64 "-DFETCHCONTENT_BASE_DIR=$depsDir" -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile (macOS)
+        if: runner.os != 'Windows'
         run: cmake --build build --config Release --parallel 3
-      - name: Upload binaries
+      - name: Compile (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP 'lnm-b'
+          cmake --build "$buildDir" --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload binaries (macOS)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: build/LibertyNeuralMatrix_artefacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload binaries (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/lnm-b/LibertyNeuralMatrix_artefacts/
           if-no-files-found: error
           retention-days: 14
