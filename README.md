@@ -39,3 +39,31 @@ cmake --build build --config Release --parallel 3
 - Never redistribute user-downloaded NAM models and IRs without their owners' rights/permissions.
 
 **Status:** Experimental source. No successful build, notarization or TONE3000 integration is claimed.
+
+## Installing the macOS prototype (GitHub Actions artifact)
+
+The macOS job produces a **nested, integrity-preserving ZIP** named `Liberty-Neural-Matrix-macOS-arm64.zip`.
+GitHub's outer artifact ZIP is only a transport wrapper: extract it first, then extract the inner
+`Liberty-Neural-Matrix-macOS-arm64.zip` with Finder. The inner ZIP is created on macOS with
+`ditto` to preserve executable bits, bundle layout, and symbolic links. The old artifact distributed
+loose app files directly and could lose executable permissions.
+
+Move `Standalone/Liberty Neural Matrix.app` to `/Applications` if you want the standalone version.
+Copy the AU component and VST3 bundle to the appropriate user or system audio-plugin directories
+when testing in a DAW.
+
+**Prototype warning:** These bundles are not Developer ID signed or notarized. Gatekeeper may warn
+even with intact ZIP packaging. Prefer System Settings > Privacy & Security > Open Anyway when
+offered, and only for a bundle you personally built or obtained from the verified Liberty
+GitHub Actions run. Do not disable Gatekeeper globally.
+
+For diagnostics on your own Mac:
+```bash
+file "/Applications/Liberty Neural Matrix.app/Contents/MacOS/Liberty Neural Matrix"
+ls -l "/Applications/Liberty Neural Matrix.app/Contents/MacOS/Liberty Neural Matrix"
+codesign --verify --deep --strict --verbose=2 "/Applications/Liberty Neural Matrix.app"
+spctl -a -vv "/Applications/Liberty Neural Matrix.app"
+```
+
+A failed Gatekeeper check is expected for a development build without a trusted Developer ID.
+Distribution to customers requires signing with Liberty's Apple Developer ID and notarization.
