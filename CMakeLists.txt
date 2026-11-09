@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(LibertyNeuralMatrix VERSION 0.6.0 LANGUAGES C CXX)
+project(LibertyNeuralMatrix VERSION 0.7.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -59,11 +59,14 @@ juce_generate_juce_header(LibertyNeuralMatrix)
 
 target_sources(LibertyNeuralMatrix PRIVATE
   Source/PluginProcessor.h Source/PluginProcessor.cpp
-  Source/PluginEditor.h Source/PluginEditor.cpp)
+  Source/PluginEditor.h Source/PluginEditor.cpp
+  Source/AmpVisualDetector.h Source/AmpArtwork.h)
 target_compile_definitions(LibertyNeuralMatrix PRIVATE
   JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
-# NAM architecture parsers register in static translation-unit constructors.
-# Force all object files into the actual plugin wrappers (Apple ld64 / MSVC).
+# NAM registers WaveNet/LSTM/ConvNet/Linear using static TU constructors.
+# Without whole-archive, the plugin host linker strips those translation units,
+# resulting in "No config parser registered for architecture: WaveNet".
+# CMake 3.24 supports WHOLE_ARCHIVE for Apple ld64 and MSVC link.exe.
 target_link_libraries(LibertyNeuralMatrix PRIVATE
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>"
   juce::juce_audio_utils juce::juce_dsp
@@ -73,10 +76,17 @@ if(WIN32)
   set_target_properties(LibertyNeuralMatrix PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
-# Catch missing NAM architecture registrations before publishing binaries.
+# Smoke test: catches missing NAM architecture registrars before publishing artifacts.
 enable_testing()
 add_executable(liberty_nam_registry_smoke tests/nam_registry_smoke.cpp)
 target_link_libraries(liberty_nam_registry_smoke PRIVATE
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>")
 target_compile_features(liberty_nam_registry_smoke PRIVATE cxx_std_20)
 add_test(NAME NAM_Registries COMMAND liberty_nam_registry_smoke)
+
+# Pure C++ detector tests: no neural model files, external downloads or JUCE test
+# helpers needed. Keeps false visual identifications under control.
+add_executable(liberty_amp_visual_detect tests/amp_visual_detect_test.cpp)
+target_include_directories(liberty_amp_visual_detect PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+target_compile_features(liberty_amp_visual_detect PRIVATE cxx_std_20)
+add_test(NAME Amp_Visual_Detection COMMAND liberty_amp_visual_detect)

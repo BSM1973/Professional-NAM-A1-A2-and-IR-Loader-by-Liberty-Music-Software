@@ -3,6 +3,7 @@
 #include "PluginEditor.h"
 #include <cmath>
 #include <filesystem>
+#include <regex>
 
 namespace {
 constexpr auto* kInput = "input";
@@ -15,6 +16,100 @@ float onePole(float frequency, double sampleRate)
     return 1.0f - std::exp(-2.0f * pi * frequency / static_cast<float>(juce::jmax(1.0, sampleRate)));
 }
 float dbToGain(float value) { return juce::Decibels::decibelsToGain(value); }
+
+// Visual catalog is independent of audio: neither recognition nor file I/O happens
+// inside processBlock(). Mappings are keyed by normalized full path, per user.
+struct SavedVisual
+{
+    int manualFamily = -1;
+    juce::String photoPath;
+};
+
+juce::File visualDatabasePath()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("Liberty Music Software")
+        .getChildFile("NeuralMatrixVisuals.json");
+}
+
+juce::String visualDatabaseKey(const juce::File& file)
+{
+    // Prefix keeps the JSON object key safe for JUCE's Identifier type.
+    return "v" + juce::String::toHexString((juce::int64)file.getFullPathName().hashCode64());
+}
+
+SavedVisual loadSavedVisual(const juce::File& source)
+{
+    SavedVisual saved;
+    const auto db = visualDatabasePath();
+    if (!db.existsAsFile() || db.getSize() > 4 * 1024 * 1024) return saved;
+    const auto root = juce::JSON::parse(db);
+    auto* obj = root.getDynamicObject();
+    if (!obj) return saved;
+    auto item = obj->getProperty(visualDatabaseKey(source));
+    auto* entry = item.getDynamicObject();
+    if (!entry || entry->getProperty("path").toString() != source.getFullPathName()) return saved;
+    saved.manualFamily = juce::jlimit(-1, libertyAmp::familyCount - 1,
+                                      (int)entry->getProperty("family"));
+    saved.photoPath = entry->getProperty("photo").toString();
+    return saved;
+}
+
+juce::Result storeSavedVisual(const juce::File& source, int manualFamily,
+                              const juce::String& photo)
+{
+    const auto db = visualDatabasePath();
+    if (db.getParentDirectory().createDirectory().failed())
+        return juce::Result::fail("Dossier de configuration inaccessible.");
+    juce::var root = db.existsAsFile() && db.getSize() <= 4 * 1024 * 1024
+        ? juce::JSON::parse(db) : juce::var();
+    if (!root.isObject()) root = juce::var(new juce::DynamicObject());
+    auto entry = new juce::DynamicObject();
+    entry->setProperty("path", source.getFullPathName());
+    entry->setProperty("family", manualFamily);
+    entry->setProperty("photo", photo);
+    root.getDynamicObject()->setProperty(visualDatabaseKey(source), juce::var(entry));
+    return db.replaceWithText(juce::JSON::toString(root, true))
+        ? juce::Result::ok() : juce::Result::fail("Impossible de sauvegarder le profil visuel.");
+}
+
+std::string extractModelMetadata(const juce::File& file)
+{
+    // NAM is usually JSON with large neural weights. Read bounded head + tail,
+    // rather than parsing the entire weights array a second time in the UI.
+    constexpr int maxHead = 192 * 1024;
+    constexpr int maxTail = 128 * 1024;
+    const auto length = file.getSize();
+    if (length <= 0 || length > 512LL * 1024 * 1024) return {};
+    auto stream = file.createInputStream();
+    if (!stream || !stream->openedOk()) return {};
+    std::string text;
+    const int headSize = (int)juce::jmin<juce::int64>(length, maxHead);
+    text.resize((size_t)headSize);
+    const int got = stream->read(text.data(), headSize);
+    if (got < 0) return {};
+    text.resize((size_t)got);
+    if (length > maxHead)
+    {
+        const int tailSize = (int)juce::jmin<juce::int64>(length - headSize, maxTail);
+        stream->setPosition(length - tailSize);
+        std::string tail((size_t)tailSize, '\0');
+        const int tailGot = stream->read(tail.data(), tailSize);
+        if (tailGot > 0) text.append(tail.data(), (size_t)tailGot);
+    }
+    // Capture only descriptive string fields, not neural architecture/config.
+    static const std::regex fields(
+       R"NAM("(gear_make|gear_model|gear|manufacturer|make|model_name|amplifier|amp_name|amp|name|description)"\s*:\s*"([^"\\]{1,150})")NAM",
+       std::regex_constants::icase);
+    std::string descriptive;
+    for (auto it = std::sregex_iterator(text.begin(), text.end(), fields);
+         it != std::sregex_iterator() && descriptive.size() < 1200; ++it)
+    {
+        descriptive += (*it)[2].str();
+        descriptive += ' ';
+    }
+    return descriptive;
+}
 
 }
 
@@ -142,12 +237,23 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
             if (expectedRate > 0 && std::abs(expectedRate - preparedRate) > 1.0)
                 return juce::Result::fail(libertyText::u8("Fréquence du NAM différente du projet. Utiliser le taux natif (souvent 48 kHz). "));
             replacement->Reset(preparedRate, maxBlock);
+            // Recognition is visual-only. Never alter NAM weights or DSP settings.
+            const auto metadata = extractModelMetadata(file);
+            const auto directory = file.getParentDirectory().getFileName().toStdString();
+            const auto recognized = libertyAmp::detect(file.getFileName().toStdString(),
+                                                        metadata, directory);
+            const auto saved = loadSavedVisual(file);
             std::unique_ptr<nam::DSP> previous;
             {
                 const juce::ScopedLock lock(modelMutex);
                 previous = std::move(models[(size_t) slot]);
                 models[(size_t) slot] = std::move(replacement);
                 slotPaths[(size_t) slot] = file.getFullPathName();
+                auto& visual = visualInfo[(size_t)slot];
+                visual.loaded = true;
+                visual.detected = recognized;
+                visual.manualFamily = saved.manualFamily;
+                visual.customPhotoPath = saved.photoPath;
             }
             // Destroy old model only after releasing the audio thread lock.
         }
@@ -194,6 +300,59 @@ juce::String LibertyNeuralMatrixAudioProcessor::slotDisplayName(int slot) const
     if (!juce::isPositiveAndBelow(slot, 4)) return {};
     const juce::ScopedLock lock(const_cast<juce::CriticalSection&>(modelMutex));
     return slotPaths[(size_t) slot].isEmpty() ? "Charger un fichier" : juce::File(slotPaths[(size_t) slot]).getFileName();
+}
+
+LibertyNeuralMatrixAudioProcessor::AmpVisualInfo
+LibertyNeuralMatrixAudioProcessor::ampVisualInfo(int slot) const
+{
+    if (!juce::isPositiveAndBelow(slot, 2)) return {};
+    const juce::ScopedLock lock(const_cast<juce::CriticalSection&>(modelMutex));
+    return visualInfo[(size_t)slot];
+}
+
+juce::Result LibertyNeuralMatrixAudioProcessor::setAmpVisualFamily(int slot, int familyOrAuto)
+{
+    if (!juce::isPositiveAndBelow(slot, 2) || familyOrAuto < -1
+        || familyOrAuto >= libertyAmp::familyCount)
+        return juce::Result::fail("Famille visuelle invalide.");
+    juce::File source;
+    juce::String photo;
+    {
+        const juce::ScopedLock lock(modelMutex);
+        if (!models[(size_t)slot] || slotPaths[(size_t)slot].isEmpty())
+            return juce::Result::fail("Charger un NAM avant de choisir son apparence.");
+        visualInfo[(size_t)slot].manualFamily = familyOrAuto;
+        photo = visualInfo[(size_t)slot].customPhotoPath;
+        source = juce::File(slotPaths[(size_t)slot]);
+    }
+    return storeSavedVisual(source, familyOrAuto, photo);
+}
+
+juce::Result LibertyNeuralMatrixAudioProcessor::setAmpVisualPhoto(int slot, const juce::File& photoFile)
+{
+    if (!juce::isPositiveAndBelow(slot, 2)) return juce::Result::fail("NAM invalide.");
+    if (photoFile != juce::File())
+    {
+        const auto ext = photoFile.getFileExtension().toLowerCase();
+        if (!photoFile.existsAsFile() || photoFile.getSize() > 12 * 1024 * 1024
+            || (ext != ".png" && ext != ".jpg" && ext != ".jpeg")
+            || !juce::ImageFileFormat::loadFrom(photoFile).isValid())
+            return juce::Result::fail("Choisir une photo JPG ou PNG valide (12 Mo maximum).");
+    }
+    juce::File source;
+    int manual = -1;
+    juce::String selectedPath;
+    {
+        const juce::ScopedLock lock(modelMutex);
+        if (!models[(size_t)slot] || slotPaths[(size_t)slot].isEmpty())
+            return juce::Result::fail("Charger un NAM avant de choisir une photo.");
+        source = juce::File(slotPaths[(size_t)slot]);
+        visualInfo[(size_t)slot].customPhotoPath = photoFile == juce::File()
+            ? juce::String() : photoFile.getFullPathName();
+        selectedPath = visualInfo[(size_t)slot].customPhotoPath;
+        manual = visualInfo[(size_t)slot].manualFamily;
+    }
+    return storeSavedVisual(source, manual, selectedPath);
 }
 
 std::array<float, 128> LibertyNeuralMatrixAudioProcessor::irWaveform(int index) const
@@ -426,6 +585,11 @@ void LibertyNeuralMatrixAudioProcessor::getStateInformation(juce::MemoryBlock& d
     {
         const juce::ScopedLock lock(modelMutex);
         for (int i = 0; i < 4; ++i) tree.setProperty("path" + juce::String(i), slotPaths[(size_t) i], nullptr);
+        for (int i = 0; i < 2; ++i)
+        {
+            tree.setProperty("visualFamily" + juce::String(i), visualInfo[(size_t)i].manualFamily, nullptr);
+            tree.setProperty("visualPhoto" + juce::String(i), visualInfo[(size_t)i].customPhotoPath, nullptr);
+        }
     }
     auto xml = tree.createXml();
     if (xml) copyXmlToBinary(*xml, destination);
@@ -441,6 +605,15 @@ void LibertyNeuralMatrixAudioProcessor::setStateInformation(const void* source, 
                 const juce::ScopedLock lock(modelMutex);
                 for (int i = 0; i < 4; ++i)
                     slotPaths[(size_t) i] = tree.getProperty("path" + juce::String(i)).toString();
+                hasPendingProjectVisuals = tree.hasProperty("visualFamily0")
+                    || tree.hasProperty("visualPhoto0");
+                for (int i = 0; i < 2; ++i)
+                {
+                    pendingProjectFamily[(size_t)i] = (int) tree.getProperty(
+                        "visualFamily" + juce::String(i), -1);
+                    pendingProjectPhoto[(size_t)i] = tree.getProperty(
+                        "visualPhoto" + juce::String(i), {}).toString();
+                }
             }
             triggerAsyncUpdate(); // Never decode NAM/IR inside DAW state callback.
         }
@@ -455,6 +628,20 @@ void LibertyNeuralMatrixAudioProcessor::handleAsyncUpdate()
     }
     for (int i = 0; i < 4; ++i)
         if (paths[(size_t)i].isNotEmpty()) (void) loadFile(i, juce::File(paths[(size_t) i]));
+    // Project-specific display settings override the local database if present.
+    // We do not write a DAW project snapshot into the global user database.
+    const juce::ScopedLock lock(modelMutex);
+    if (hasPendingProjectVisuals)
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            if (!visualInfo[(size_t)i].loaded) continue;
+            visualInfo[(size_t)i].manualFamily = juce::jlimit(-1, libertyAmp::familyCount-1,
+                                                               pendingProjectFamily[(size_t)i]);
+            visualInfo[(size_t)i].customPhotoPath = pendingProjectPhoto[(size_t)i];
+        }
+        hasPendingProjectVisuals = false;
+    }
 }
 
 juce::AudioProcessorEditor* LibertyNeuralMatrixAudioProcessor::createEditor()

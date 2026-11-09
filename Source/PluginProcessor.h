@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include <get_dsp.h>
+#include "AmpVisualDetector.h"
 #include <array>
 #include <memory>
 #include <atomic>
@@ -34,6 +35,21 @@ public:
     // Slots 0/1 are .nam, slots 2/3 are .wav. These operations run off the audio callback.
     juce::Result loadFile(int slot, const juce::File& file);
     juce::String slotDisplayName(int slot) const;
+
+    struct AmpVisualInfo
+    {
+        bool loaded = false;
+        libertyAmp::Result detected;
+        int manualFamily = -1; // -1 means automatic; >=0 forces a visual family
+        juce::String customPhotoPath; // optional user-owned local artwork
+        int displayedFamily() const noexcept
+        {
+            return manualFamily >= 0 ? manualFamily : detected.family;
+        }
+    };
+    AmpVisualInfo ampVisualInfo(int slot) const;
+    juce::Result setAmpVisualFamily(int slot, int familyOrAuto);
+    juce::Result setAmpVisualPhoto(int slot, const juce::File& file);
     std::array<float, 128> irWaveform(int index) const;
     double getPreparedSampleRate() const noexcept { return preparedRateAtomic.load(); }
     juce::AudioProcessorValueTreeState state;
@@ -44,6 +60,10 @@ private:
     juce::CriticalSection modelMutex;
     std::array<std::unique_ptr<nam::DSP>, 2> models;
     std::array<juce::String, 4> slotPaths;
+    std::array<AmpVisualInfo, 2> visualInfo {};
+    std::array<int, 2> pendingProjectFamily {{-1,-1}};
+    std::array<juce::String, 2> pendingProjectPhoto {};
+    bool hasPendingProjectVisuals = false;
     std::array<juce::dsp::Convolution, 2> irs;
     std::array<bool, 2> irLoaded {{ false, false }};
     std::array<std::array<float, 128>, 2> irPeaks {};

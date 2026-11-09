@@ -42,12 +42,25 @@ def verify(width,height,page):
     lx,ly,lw,lh=cx,cy,leftW,ch
     rx,ry,rw,rh=cx+leftW+16,cy,cw-leftW-16,ch
     if page=='amp':
-        h=max(200,lh-210)
+        rowTop=ly+lh-174
+        artX=lx+22;artY=ly+54;artW=lw-44
+        artH=max(180,rowTop-ly-64)
+        innerX=artX+13;innerY=artY+6;innerW=artW-26;innerH=artH-12
+        headHeight=(innerH-8)//2
         for i in range(2):
-            pos=ly+h+89+i*45
-            put(f'load{i}',lx+29,pos,172,35)
-            put(f'filename{i}',lx+214,pos-1,lw-241,36)
-        # right 2x2 grid
+            put(f'ampVisual{i}',innerX,innerY+i*(headHeight+8),innerW,headHeight)
+        inset=23;avail=lw-inset*2;fileW=min(161,avail//4)
+        infoW=avail*30//100;choiceW=avail*33//100;photoW=avail*20//100
+        clearW=avail-infoW-choiceW-photoW-12
+        for i in range(2):
+            y=rowTop+8+78*i
+            put(f'load{i}',lx+inset,y,fileW,28)
+            put(f'filename{i}',lx+inset+fileW+10,y,avail-fileW-10,28)
+            under=y+33
+            put(f'visualInfo{i}',lx+inset,under,infoW,27)
+            put(f'visualChoice{i}',lx+inset+infoW+4,under,choiceW-4,27)
+            put(f'photoButton{i}',lx+inset+infoW+choiceW+4,under,photoW-4,27)
+            put(f'photoReset{i}',lx+inset+infoW+choiceW+photoW+4,under,clearW-4,27)
         gx,gy,gw,gh=rx+38,ry+115,rw-76,rh-230-35
         cw=(gw-8)//2; h=(gh-8)//2
         for i in range(4):

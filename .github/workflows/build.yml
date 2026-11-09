@@ -1,21 +1,15 @@
 name: Liberty Neural Matrix - AU VST3 standalone
-# v0.6.1 repair Unicode linter syntax; validate before compiling the NAM registry.
-
-# Exactly one bootstrap run when this workflow first reaches the main branch.
-# Further code pushes do not automatically consume CI minutes.
+# v0.7 automatic amplifier visuals, manual mappings, detector tests (one batched build)
 on:
   push:
     paths:
       - .github/workflows/build.yml
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: neural-matrix-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
   verify-and-build:
     name: ${{ matrix.name }}
@@ -33,12 +27,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-      # v0.5: UTF-8 accents, geometry guards, IR preview and microphone DSP checks
-      - name: Preflight checks (UTF-8 + geometry + DSP)
+      - name: Preflight checks
         run: python scripts/preflight.py
-      # Windows GitHub workspace paths repeat the long repository name.
-      # JUCE's nested examples then exceed Windows MAX_PATH during git checkout.
-      # Put both build and FetchContent worktrees under short RUNNER_TEMP paths.
       - name: Configure Release (macOS)
         if: runner.os != 'Windows'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -60,8 +50,6 @@ jobs:
           $buildDir = Join-Path $env:RUNNER_TEMP 'lnm-b'
           cmake --build "$buildDir" --config Release --parallel 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # upload-artifact directly flattens Unix executable permissions and can
-      # break macOS .app/.vst3/.component bundles. Pack them with macOS ditto first.
       - name: Test NAM architecture registrations (macOS)
         if: runner.os == 'macOS'
         run: ctest --test-dir build -C Release --output-on-failure
@@ -81,7 +69,6 @@ jobs:
           test -x "$exe" || { echo "::error::Standalone executable missing or not executable"; exit 1; }
           test -d "$release/AU/Liberty Neural Matrix.component"
           test -d "$release/VST3/Liberty Neural Matrix.vst3"
-          echo "Standalone architecture: $(/usr/bin/lipo -archs "$exe")"
           /usr/bin/lipo -archs "$exe" | /usr/bin/grep -qw arm64
           package="$RUNNER_TEMP/Liberty-Neural-Matrix-macOS-arm64"
           mkdir -p "$package"
@@ -90,7 +77,6 @@ jobs:
           done
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$package" "$PWD/Liberty-Neural-Matrix-macOS-arm64.zip"
           /usr/bin/unzip -tq "$PWD/Liberty-Neural-Matrix-macOS-arm64.zip"
-          /bin/ls -lh "$PWD/Liberty-Neural-Matrix-macOS-arm64.zip"
       - name: Upload preserved macOS ZIP
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
@@ -107,5 +93,3 @@ jobs:
           path: ${{ runner.temp }}/lnm-b/LibertyNeuralMatrix_artefacts/
           if-no-files-found: error
           retention-days: 14
-
-# v0.4 Guitar Edition: single batched source/UI/DSP build verification

@@ -1,6 +1,7 @@
 #include "TextUtf8.h"
 #include "PluginEditor.h"
 #include "ArtAssets.h"
+#include "AmpArtwork.h"
 #include <algorithm>
 #include <cmath>
 
@@ -30,82 +31,8 @@ void card(juce::Graphics& g, const juce::Rectangle<int>& r, const juce::String& 
 }
 
 
-// Two model-specific Liberty amp illustrations. These are artistic faces,
-// never an identification or copy of the original captured hardware.
-void drawModelAmp(juce::Graphics& g, juce::Rectangle<int> bounds,
-                  const juce::String& fileName, int slot)
-{
-    g.saveState();
-    g.reduceClipRegion(bounds);
-    const bool loaded = fileName.isNotEmpty() && fileName != "Charger un fichier";
-    const auto lower = fileName.toLowerCase();
-    int style = 0;
-    if (lower.contains("plexi") || lower.contains("british") || lower.contains("jcm") || lower.contains("2203")) style = 1;
-    else if (lower.contains("rect") || lower.contains("mesa") || lower.contains("highgain") || lower.contains("5150")) style = 2;
-    else if (lower.contains("twin") || lower.contains("deluxe") || lower.contains("clean") || lower.contains("princeton")) style = 3;
-    else if (lower.contains("bass") || lower.contains("svt") || lower.contains("ampeg")) style = 4;
-    else if (loaded) style = (int)((static_cast<unsigned int>(fileName.hashCode()) + (unsigned int)slot * 3u) % 5u);
-    const std::array<juce::Colour,5> covers {
-        juce::Colour::fromRGB(31,28,27), juce::Colour::fromRGB(38,29,22),
-        juce::Colour::fromRGB(19,23,30), juce::Colour::fromRGB(59,51,39),
-        juce::Colour::fromRGB(27,33,31) };
-    const std::array<juce::Colour,5> metal {
-        juce::Colour::fromRGB(116,85,53), juce::Colour::fromRGB(210,160,90),
-        juce::Colour::fromRGB(110,121,130), juce::Colour::fromRGB(226,203,164),
-        juce::Colour::fromRGB(134,159,146) };
-    const auto body = bounds.toFloat().reduced(5.0f, 20.0f);
-    const auto cover = covers[(size_t)style];
-    const auto face = metal[(size_t)style];
-    g.setColour(juce::Colours::black.withAlpha(0.64f));
-    g.fillRoundedRectangle(body.translated(0.0f, 5.0f), 12.0f);
-    g.setGradientFill(juce::ColourGradient(cover.brighter(0.3f), body.getTopLeft(),
-                                           cover.darker(0.2f), body.getBottomRight(), false));
-    g.fillRoundedRectangle(body, 12.0f);
-    g.setColour(face.withAlpha(0.8f));
-    g.drawRoundedRectangle(body, 12.0f, 1.6f);
-    auto grilleArea = body.reduced(12.0f, 14.0f);
-    grilleArea = grilleArea.withHeight(grilleArea.getHeight() * 0.55f);
-    g.setColour(juce::Colours::black.withAlpha(0.84f));
-    g.fillRoundedRectangle(grilleArea, 6.0f);
-    g.setColour(face.withAlpha(0.30f));
-    for (float y = grilleArea.getY() + 6; y < grilleArea.getBottom() - 4; y += 7)
-        g.drawHorizontalLine((int)y, grilleArea.getX() + 5, grilleArea.getRight() - 5);
-    for (int lamp = 0; lamp < (style == 2 ? 5 : 3); ++lamp)
-    {
-        const float x = grilleArea.getX() + (lamp + 1) * grilleArea.getWidth() / (style == 2 ? 6.0f : 4.0f);
-        auto tube = juce::Rectangle<float>(8, grilleArea.getHeight() * 0.43f)
-                        .withCentre({x, grilleArea.getCentreY() + 3.0f});
-        g.setColour(juce::Colour::fromRGB(248,116,40).withAlpha(loaded ? 0.75f : 0.19f));
-        g.fillRoundedRectangle(tube, 3.0f);
-    }
-    g.setColour(face);
-    g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-    g.drawFittedText("LIBERTY", grilleArea.toNearestInt().reduced(8, 6), juce::Justification::centred, 1);
-    auto controls = body.reduced(12.0f, 11.0f).withTrimmedTop(body.getHeight() * 0.61f);
-    g.setGradientFill(juce::ColourGradient(face.brighter(0.18f), controls.getTopLeft(),
-                                           face.darker(0.35f), controls.getBottomLeft(), false));
-    g.fillRoundedRectangle(controls, 5.0f);
-    const auto y = controls.getY() + controls.getHeight() * 0.45f;
-    for (int i = 0; i < 7; ++i)
-    {
-        auto x = controls.getX() + (i + 1.0f) * controls.getWidth() / 8.0f;
-        auto knob = juce::Rectangle<float>(12.0f,12.0f).withCentre({x,y});
-        g.setColour(juce::Colour::fromRGB(21,20,19));
-        g.fillEllipse(knob);
-        g.setColour(juce::Colours::white.withAlpha(0.72f));
-        g.drawLine(x,y-3,x,y-6,1.1f);
-    }
-    // Keep the model filename outside the face controls: no text overlap.
-    auto nameArea = bounds.reduced(10, 6).removeFromBottom(20);
-    g.setColour(loaded ? cream : secondary);
-    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-    const auto title = loaded ? fileName.upToLastOccurrenceOf(".", false, false)
-                              : libertyText::u8("Aucun NAM chargé");
-    g.drawFittedText(juce::String(slot == 0 ? "A / " : "B / ") + title,
-                     nameArea, juce::Justification::centred, 1);
-    g.restoreState();
-}
-
+// Distinct amp portraits are painted by AmpArtwork.h using a detected visual
+// family. Hardware recognition remains probabilistic, never official.
 void panelLine(juce::Graphics& g, juce::Rectangle<int> area)
 {
     g.setColour(panelEdge.withAlpha(0.8f));
@@ -123,7 +50,7 @@ void caption(juce::Graphics& g, juce::String message, juce::Rectangle<int> r,
 template <size_t N>
 juce::Image loadEmbeddedImage(const std::array<const char*, N>& segments)
 {
-    // Concaténation au chargement seulement : aucune chaîne littérale trop longue pour MSVC.
+    // Deliberately concatenate at runtime. MSVC cannot compile a single 39–45kB literal.
     juce::String encoded;
     for (const auto* segment : segments)
         encoded += segment;
@@ -314,6 +241,51 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
         filename[(size_t)i].setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(filename[(size_t)i]);
     }
+    // An independent, per-NAM visual override and optional user-owned photograph.
+    // The selector only changes artwork and never modifies the audio chain.
+    for (int i = 0; i < 2; ++i)
+    {
+        auto& choice = visualChoices[(size_t)i];
+        choice.addItem("AUTO", 1);
+        for (int family = 0; family < libertyAmp::familyCount; ++family)
+            choice.addItem(libertyText::u8(libertyAmp::families[(size_t)family].name), family + 2);
+        choice.setSelectedId(1, juce::dontSendNotification);
+        choice.onChange = [this, i]
+        {
+            const int family = visualChoices[(size_t)i].getSelectedId() - 2;
+            const auto result = processor.setAmpVisualFamily(i, family);
+            if (result.failed()) showFeedback(result.getErrorMessage());
+            else showFeedback(libertyText::u8("Profil visuel mémorisé pour ce NAM."));
+            refreshFromProcessor();
+            repaint();
+        };
+        addAndMakeVisible(choice);
+
+        auto& info = visualStatus[(size_t)i];
+        info.setColour(juce::Label::textColourId, secondary);
+        info.setJustificationType(juce::Justification::centredLeft);
+        info.setFont(juce::Font(juce::FontOptions(11.4f)));
+        info.setMinimumHorizontalScale(0.72f);
+        addAndMakeVisible(info);
+
+        auto& photo = photoButtons[(size_t)i];
+        photo.setButtonText("PHOTO...");
+        photo.onClick = [this,i] { selectAmpPhoto(i); };
+        addAndMakeVisible(photo);
+
+        auto& reset = resetPhotoButtons[(size_t)i];
+        reset.setButtonText("EFFACER");
+        reset.onClick = [this,i]
+        {
+            const auto result = processor.setAmpVisualPhoto(i, juce::File());
+            showFeedback(result.failed() ? result.getErrorMessage()
+                                         : libertyText::u8("Photo retirée : retour au profil visuel."));
+            refreshFromProcessor();
+            repaint();
+        };
+        addAndMakeVisible(reset);
+    }
+
     auto createSliders = [this](auto& sliders, auto& captions, auto& attach,
                                 const std::array<const char*,4>& ids,
                                 const std::array<juce::String,4>& names)
@@ -440,6 +412,37 @@ void LibertyNeuralMatrixAudioProcessorEditor::refreshFromProcessor()
         const auto name = processor.slotDisplayName(i);
         if (name != filename[(size_t)i].getText()) filename[(size_t)i].setText(name, juce::dontSendNotification);
         filename[(size_t)i].setTooltip(name);
+        if (i < 2)
+        {
+            const auto visual = processor.ampVisualInfo(i);
+            const auto family = visual.displayedFamily();
+            const juce::String familyName = libertyText::u8(libertyAmp::families[(size_t)
+                juce::jlimit(0, libertyAmp::familyCount-1, family)].name);
+            const auto confidence = visual.detected.confidence == 3
+                ? libertyText::u8("élevée") : visual.detected.confidence == 2
+                ? libertyText::u8("moyenne") : visual.detected.confidence == 1
+                ? libertyText::u8("faible") : libertyText::u8("inconnue");
+            const auto sourceLabel = visual.detected.source == "metadata" ? libertyText::u8("métadonnées")
+                : visual.detected.source == "filename" ? "nom"
+                : visual.detected.source == "directory" ? "dossier" : "aucun indice";
+            const juce::String info = !visual.loaded ? libertyText::u8("Aucun NAM chargé")
+                : (visual.manualFamily >= 0 ? "MANUEL : " : "AUTO : ") + familyName;
+            visualStatus[(size_t)i].setText(info, juce::dontSendNotification);
+            visualStatus[(size_t)i].setTooltip(
+                familyName + " / " + libertyText::u8("confiance ") + confidence
+                + " / " + libertyText::u8("source : ") + sourceLabel);
+            const int selected = visual.manualFamily < 0 ? 1 : visual.manualFamily + 2;
+            if (visualChoices[(size_t)i].getSelectedId() != selected)
+                visualChoices[(size_t)i].setSelectedId(selected, juce::dontSendNotification);
+            if (ampPhotoPaths[(size_t)i] != visual.customPhotoPath)
+            {
+                ampPhotoPaths[(size_t)i] = visual.customPhotoPath;
+                ampPhotos[(size_t)i] = visual.customPhotoPath.isNotEmpty()
+                    ? juce::ImageFileFormat::loadFrom(juce::File(visual.customPhotoPath))
+                    : juce::Image();
+                repaint();
+            }
+        }
     }
     auto refresh = [this](auto& group, const char* paramId)
     {
@@ -473,6 +476,13 @@ void LibertyNeuralMatrixAudioProcessorEditor::showPage(Page next)
         micCaptions[(size_t)i].setVisible(page == Page::cab);
         masterSliders[(size_t)i].setVisible(page != Page::cab);
         masterCaptions[(size_t)i].setVisible(page != Page::cab);
+    }
+    for (int i = 0; i < 2; ++i)
+    {
+        visualChoices[(size_t)i].setVisible(page == Page::amp);
+        visualStatus[(size_t)i].setVisible(page == Page::amp);
+        photoButtons[(size_t)i].setVisible(page == Page::amp);
+        resetPhotoButtons[(size_t)i].setVisible(page == Page::amp);
     }
     for (int i = 0; i < 3; ++i)
     {
@@ -517,9 +527,30 @@ void LibertyNeuralMatrixAudioProcessorEditor::loadFile(int slot)
                 safe->showFeedback(libertyText::u8("Chargement réussi : ") + file.getFileName());
                 safe->refreshFromProcessor();
                 if (slot >= 2) safe->waveform->repaint();
-                safe->repaint(); // Update two NAM illustrations only after a successful load.
+                safe->repaint(); // Refresh both independent model visuals.
             }
             else safe->showFeedback("Erreur : " + result.getErrorMessage());
+        });
+}
+
+void LibertyNeuralMatrixAudioProcessorEditor::selectAmpPhoto(int slot)
+{
+    juce::Component::SafePointer<LibertyNeuralMatrixAudioProcessorEditor> safe(this);
+    photoChoosers[(size_t)slot] = std::make_unique<juce::FileChooser>(
+        libertyText::u8("Choisir une photo personnelle de cet ampli (JPG/PNG)"),
+        juce::File(), "*.jpg;*.jpeg;*.png");
+    photoChoosers[(size_t)slot]->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe,slot](const juce::FileChooser& selected)
+        {
+            if (safe == nullptr) return;
+            const auto imageFile = selected.getResult();
+            if (!imageFile.existsAsFile()) return;
+            const auto result = safe->processor.setAmpVisualPhoto(slot, imageFile);
+            safe->showFeedback(result.failed() ? result.getErrorMessage()
+                : libertyText::u8("Photo associée au NAM et mémorisée pour les prochains chargements."));
+            safe->refreshFromProcessor();
+            safe->repaint();
         });
 }
 
@@ -578,12 +609,32 @@ void LibertyNeuralMatrixAudioProcessorEditor::resized()
 
     if (page == Page::amp)
     {
-        // Left: amplifier photograph and two separate NAM file rows.
-        const int photoHeight = juce::jmax(200, left.getHeight() - 210);
-        load[0].setBounds(left.getX() + 29, left.getY()+photoHeight+89, 172, 35);
-        filename[0].setBounds(left.getX() + 214, left.getY()+photoHeight+88, left.getWidth()-241, 36);
-        load[1].setBounds(left.getX() + 29, left.getY()+photoHeight+134, 172, 35);
-        filename[1].setBounds(left.getX() + 214, left.getY()+photoHeight+133, left.getWidth()-241, 36);
+        // Reserve fixed rows at the bottom for file + detection + manual override.
+        // At minimum window size all controls remain inside the left card.
+        const int rowTop = left.getBottom() - 174;
+        const int inset = 23;
+        const int available = left.getWidth() - 2*inset;
+        const int fileButtonWidth = juce::jmin(161, available / 4);
+        const int infoWidth = available * 30 / 100;
+        const int choiceWidth = available * 33 / 100;
+        const int photoWidth = available * 20 / 100;
+        const int clearWidth = available - infoWidth - choiceWidth - photoWidth - 12;
+        for (int i = 0; i < 2; ++i)
+        {
+            const int y = rowTop + 8 + 78*i;
+            load[(size_t)i].setBounds(left.getX()+inset, y,
+                                      fileButtonWidth, 28);
+            filename[(size_t)i].setBounds(left.getX()+inset+fileButtonWidth+10,
+                                          y, available-fileButtonWidth-10, 28);
+            const int under = y + 33;
+            visualStatus[(size_t)i].setBounds(left.getX()+inset,under,infoWidth,27);
+            visualChoices[(size_t)i].setBounds(left.getX()+inset+infoWidth+4,under,
+                                               choiceWidth-4,27);
+            photoButtons[(size_t)i].setBounds(left.getX()+inset+infoWidth+choiceWidth+4,
+                                              under,photoWidth-4,27);
+            resetPhotoButtons[(size_t)i].setBounds(left.getX()+inset+infoWidth+choiceWidth+photoWidth+4,
+                                                   under,clearWidth-4,27);
+        }
         layoutGrid(right.reduced(38, 115).withTrimmedBottom(35), ampSliders, ampCaptions);
         const auto modeWidth = (right.getWidth() - 108) / 3;
         for (int i = 0; i < 3; ++i)
@@ -661,7 +712,7 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(panelEdge);g.drawRoundedRectangle(header.toFloat(),12.0f,1.2f);
     g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(28.0f,juce::Font::bold)));
     g.drawText("LIBERTY  /  NEURAL MATRIX",header.getX()+22,header.getY()+7,header.getWidth()-245,36,juce::Justification::centredLeft,false);
-    caption(g,"GUITAR EDITION 0.5  -  NAM A1/A2  -  CABINET IR",{header.getX()+24,header.getY()+45,header.getWidth()-290,21},12);
+    caption(g,"GUITAR EDITION 0.7  -  NAM A1/A2  -  CABINET IR",{header.getX()+24,header.getY()+45,header.getWidth()-290,21},12);
     caption(g,"LIBERTY MUSIC SOFTWARE",{header.getRight()-236,header.getY()+22,217,31},13,true);
     g.setColour(black);g.fillRoundedRectangle(navArea.toFloat(),11.0f);
     card(g,footer,page == Page::cab ? "IR - NIVEAUX ET FILTRES" : "MASTER - CONTROLES PRINCIPAUX");
@@ -671,7 +722,8 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
     {
         card(g,left,"AMPLIFICATEUR ET CAPTURES NAM");
         card(g,right,libertyText::u8("ÉGALISATION POST-NAM"));
-        const int h = juce::jmax(200,left.getHeight()-210);
+        const int rowTop = left.getBottom() - 174;
+        const int h = juce::jmax(180, rowTop - left.getY() - 64);
         const auto art = juce::Rectangle<int>(left.getX()+22,left.getY()+54,left.getWidth()-44,h);
         g.setColour(black);g.fillRoundedRectangle(art.toFloat(),9.0f);
         if(ampImage.isValid())
@@ -682,14 +734,27 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
             g.restoreState();
         }
         const auto headRegion = art.reduced(13, 6);
-        const int headGap = 12;
-        const int headWidth = (headRegion.getWidth() - headGap) / 2;
-        drawModelAmp(g, {headRegion.getX(), headRegion.getY(), headWidth, headRegion.getHeight()},
-                     processor.slotDisplayName(0), 0);
-        drawModelAmp(g, {headRegion.getX() + headWidth + headGap, headRegion.getY(), headWidth, headRegion.getHeight()},
-                     processor.slotDisplayName(1), 1);
-        const int ay=left.getY()+h+72;
-        panelLine(g,{left.getX()+19,ay,left.getWidth()-38,122});
+        const int headGap = 8;
+        const int headHeight = (headRegion.getHeight() - headGap) / 2;
+        for (int i = 0; i < 2; ++i)
+        {
+            const auto visual = processor.ampVisualInfo(i);
+            const auto faceRect = juce::Rectangle<int>(headRegion.getX(),
+                headRegion.getY() + i * (headHeight + headGap),
+                headRegion.getWidth(), headHeight);
+            libertyArtwork::paint(g, faceRect, visual.displayedFamily(),
+                                  visual.loaded, ampPhotos[(size_t)i]);
+            auto tag = faceRect.reduced(10, 4).removeFromTop(19);
+            g.setColour(juce::Colours::black.withAlpha(0.76f));
+            g.fillRoundedRectangle(tag.toFloat(), 5.0f);
+            g.setColour(bronze);
+            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            const auto familyName = libertyText::u8(libertyAmp::families[(size_t)
+                juce::jlimit(0, libertyAmp::familyCount-1, visual.displayedFamily())].name);
+            g.drawFittedText(juce::String(i == 0 ? "NAM A  /  " : "NAM B  /  ") + familyName,
+                             tag.reduced(7,0),juce::Justification::centredLeft,1);
+        }
+        panelLine(g,{left.getX()+19,rowTop-2,left.getWidth()-38,170});
         caption(g,libertyText::u8("Mélange entre deux captures - commandes automatisables."),
                 {right.getX()+29,right.getBottom()-116,right.getWidth()-58,21},13);
         caption(g,libertyText::u8("L'EQ agit après le modèle NAM, sans modifier ses poids."),

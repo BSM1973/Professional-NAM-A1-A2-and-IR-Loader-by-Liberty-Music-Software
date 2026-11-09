@@ -49,6 +49,14 @@ private:
     std::array<std::unique_ptr<ComboAttachment>, 2> micTypeAttach;
     std::array<juce::Label, 2> micTypeLabels;
 
+    // Per-slot visual detector: automatic profiles, manual selection, optional photo.
+    std::array<juce::ComboBox, 2> visualChoices;
+    std::array<juce::Label, 2> visualStatus;
+    std::array<juce::TextButton, 2> photoButtons, resetPhotoButtons;
+    std::array<std::unique_ptr<juce::FileChooser>, 2> photoChoosers;
+    std::array<juce::Image, 2> ampPhotos;
+    std::array<juce::String, 2> ampPhotoPaths;
+
     std::unique_ptr<IRWaveform> waveform;
     std::array<std::unique_ptr<MicPositionCanvas>, 2> micCanvases;
     juce::Image ampImage, cabImage;
@@ -58,6 +66,7 @@ private:
     void refreshFromProcessor();
     void showFeedback(const juce::String&);
     void loadFile(int);
+    void selectAmpPhoto(int);
     void selectBlend(bool isNam, float value);
     void timerCallback() override;
     void layoutRow(juce::Rectangle<int>, std::array<juce::Slider,4>&,

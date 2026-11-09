@@ -9,7 +9,8 @@ paths = [
     'CMakeLists.txt',
     'Source/PluginProcessor.h', 'Source/PluginProcessor.cpp',
     'Source/PluginEditor.h', 'Source/PluginEditor.cpp', 'Source/ArtAssets.h',
-    'Source/TextUtf8.h', 'tests/nam_registry_smoke.cpp',
+    'Source/TextUtf8.h', 'Source/AmpVisualDetector.h', 'Source/AmpArtwork.h',
+    'tests/nam_registry_smoke.cpp', 'tests/amp_visual_detect_test.cpp',
     '.github/workflows/build.yml', 'README.md', 'docs/ROADMAP.md',
 ]
 errors=[]
@@ -39,16 +40,20 @@ checks = {
     'Mic profile DSP': 'micAType' in processor and 'colourMic' in processor and 'micBOffset' in processor,
     'Real IR preview': 'irWaveform' in processor and 'AudioFormatReader' in processor,
     'Functional mic drag UI': 'MicPositionCanvas' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
+    'Automatic amp recognition': 'libertyAmp::detect' in processor and 'extractModelMetadata' in processor,
+    'Visual override saved': 'storeSavedVisual' in processor and 'visualFamily' in processor,
+    'Photograph override': 'selectAmpPhoto' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
+    'Automated detector tests': 'Amp_Visual_Detection' in cmake,
+    'Visual family artwork': 'libertyArtwork::paint' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
 }
 for name, ok in checks.items():
     print(('OK' if ok else 'FAIL') + ' - ' + name)
     if not ok: errors.append(name)
-# Guard against MSVC C2026: all image string literals must be short.
-# Verify reconstructed Base64 matches complete JPEGs before paying for CI.
+# MSVC rejects single overly long C++ string literals (error C2026).
+# Check each independently stored segment and verify round-trip JPEG integrity.
 art = (root / 'Source/ArtAssets.h').read_text(encoding='utf-8')
 asset_pattern = re.compile(r'inline constexpr std::array<const char\*, (\d+)> (ampJpegChunks|cabJpegChunks) = \{(.*?)\};', re.S)
-assets = {match.group(2): match for match in asset_pattern.finditer(art)
-}
+assets = {match.group(2): match for match in asset_pattern.finditer(art)}
 for asset_name in ('ampJpegChunks', 'cabJpegChunks'):
     match = assets.get(asset_name)
     if match is None:
@@ -72,23 +77,24 @@ for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
     for pattern in ['\ufffd', 'Ã©', 'Ã¨', 'Ãª', 'Ã ', 'â€™', 'â€œ', 'â€', '\u25a1']:
         if pattern in content:
             errors.append(f'Mojibake in {name}: {pattern!r}')
-# French-text regression guard: future non-ASCII source string literals MUST
-# use libertyText::u8 before reaching JUCE (including newly created C++ files).
+# New French-text invariant: UTF-8 literal bytes must be converted with
+# libertyText::u8 before JUCE receives them. This catches future regressions.
 for path in sorted((root / 'Source').rglob('*.cpp')) + sorted((root / 'Source').rglob('*.h')):
     name = str(path.relative_to(root))
     if name == 'Source/ArtAssets.h':
         continue
     content = path.read_text(encoding='utf-8')
     for match in re.finditer(r'"(?:\\.|[^"\\])*"', content):
-        literal = match.group(0)
-        if any(ord(c) > 127 for c in literal):
-            prefix = content[max(0, match.start()-65):match.start()]
-            if not re.search(r'libertyText::u8\s*\(\s*$', prefix):
-                errors.append(f'Raw non-ASCII literal in {name}: {literal[:80]}')
+        token = match.group(0)
+        if any(ord(c) > 127 for c in token):
+            if not re.search(r'libertyText::u8\s*\(\s*$', content[max(0, match.start()-65):match.start()]):
+                errors.append(f'Raw non-ASCII GUI literal in {name}: {token[:80]}')
+if 'libertyText::u8' not in (root / 'Source/PluginEditor.cpp').read_text(encoding='utf-8'):
+    errors.append('UTF-8 wrapper missing in editor')
 if '$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>' not in cmake:
-    errors.append('WHOLE_ARCHIVE missing: WaveNet/LSTM parsers could be stripped')
+    errors.append('NAM architectures will not register: WHOLE_ARCHIVE missing')
 if 'NAM_Registries' not in cmake:
-    errors.append('NAM architecture registration smoke test missing')
+    errors.append('NAM registry smoke test missing')
 
 if errors:
     print('\nPRE-FLIGHT FAILED: ' + ', '.join(errors), file=sys.stderr)
