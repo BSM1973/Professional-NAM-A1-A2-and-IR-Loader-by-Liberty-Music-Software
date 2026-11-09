@@ -1,5 +1,5 @@
 name: Liberty Neural Matrix - AU VST3 standalone
-# v0.7: proven macOS and Windows workflow; includes NAM and amplifier detector tests.
+# v0.7.1: verified palette guard, proven macOS/Windows CI and amplifier detector tests.
 
 # Exactly one bootstrap run when this workflow first reaches the main branch.
 # Further code pushes do not automatically consume CI minutes.
