@@ -1,4 +1,5 @@
 name: Liberty Neural Matrix - AU VST3 standalone
+# v0.5.1 MSVC C2026 image-literal fix; enforced by Python preflight before compilation.
 
 # Exactly one bootstrap run when this workflow first reaches the main branch.
 # Further code pushes do not automatically consume CI minutes.

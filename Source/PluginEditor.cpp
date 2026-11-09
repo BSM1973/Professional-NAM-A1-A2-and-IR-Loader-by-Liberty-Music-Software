@@ -42,10 +42,16 @@ void caption(juce::Graphics& g, juce::String message, juce::Rectangle<int> r,
     g.drawFittedText(message, r, juce::Justification::centredLeft, 1);
 }
 
-juce::Image loadEmbeddedImage(const char* data)
+template <size_t N>
+juce::Image loadEmbeddedImage(const std::array<const char*, N>& segments)
 {
+    // Concaténation au chargement seulement : aucune chaîne littérale trop longue pour MSVC.
+    juce::String encoded;
+    for (const auto* segment : segments)
+        encoded += segment;
+
     juce::MemoryOutputStream decoded;
-    if (!juce::Base64::convertFromBase64(decoded, juce::StringRef(data))) return {};
+    if (!juce::Base64::convertFromBase64(decoded, juce::StringRef(encoded))) return {};
     return juce::ImageFileFormat::loadFrom(decoded.getData(), decoded.getDataSize());
 }
 }
@@ -211,8 +217,8 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
     : juce::AudioProcessorEditor(&p), processor(p)
 {
     setLookAndFeel(&hardware);
-    ampImage = loadEmbeddedImage(libertyArt::ampJpeg);
-    cabImage = loadEmbeddedImage(libertyArt::cabJpeg);
+    ampImage = loadEmbeddedImage(libertyArt::ampJpegChunks);
+    cabImage = loadEmbeddedImage(libertyArt::cabJpegChunks);
 
     const std::array<juce::String,4> tabs {{ "AMPLI", "BAFFLES / IR", "EFFETS", "RÉGLAGES" }};
     const std::array<juce::String,4> loadNames {{ "CHARGER NAM A", "CHARGER NAM B", "CHARGER IR A", "CHARGER IR B" }};

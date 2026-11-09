@@ -2,6 +2,8 @@
 """No-network, no-compilation checks before starting a paid CI build."""
 from pathlib import Path
 import sys
+import base64
+import re
 root = Path(__file__).resolve().parents[1]
 paths = [
     'CMakeLists.txt',
@@ -40,6 +42,28 @@ checks = {
 for name, ok in checks.items():
     print(('OK' if ok else 'FAIL') + ' - ' + name)
     if not ok: errors.append(name)
+# Guard against MSVC C2026: all image string literals must be short.
+# Verify reconstructed Base64 matches complete JPEGs before paying for CI.
+art = (root / 'Source/ArtAssets.h').read_text(encoding='utf-8')
+asset_pattern = re.compile(r'inline constexpr std::array<const char\*, (\d+)> (ampJpegChunks|cabJpegChunks) = \{(.*?)\};', re.S)
+assets = {match.group(2): match for match in asset_pattern.finditer(art)
+}
+for asset_name in ('ampJpegChunks', 'cabJpegChunks'):
+    match = assets.get(asset_name)
+    if match is None:
+        errors.append(f'Missing segmented artwork: {asset_name}')
+        continue
+    chunks = re.findall(r'"([A-Za-z0-9+/=]+)"', match.group(3))
+    if len(chunks) != int(match.group(1)) or not chunks or max(map(len, chunks)) > 3072:
+        errors.append(f'MSVC C2026 risk or inconsistent segment count: {asset_name}')
+        continue
+    try:
+        image_bytes = base64.b64decode(''.join(chunks), validate=True)
+        if not (image_bytes.startswith(b'\xff\xd8') and image_bytes.endswith(b'\xff\xd9')):
+            errors.append(f'Invalid JPEG data: {asset_name}')
+    except (ValueError, base64.binascii.Error):
+        errors.append(f'Invalid Base64: {asset_name}')
+
 # Check common mojibake and replacement glyphs, without scanning Base64 image resources.
 for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
              'Source/PluginProcessor.cpp', 'Source/PluginProcessor.h']:
