@@ -34,6 +34,7 @@ public:
     // Slots 0/1 are .nam, slots 2/3 are .wav. These operations run off the audio callback.
     juce::Result loadFile(int slot, const juce::File& file);
     juce::String slotDisplayName(int slot) const;
+    std::array<float, 128> irWaveform(int index) const;
     double getPreparedSampleRate() const noexcept { return preparedRateAtomic.load(); }
     juce::AudioProcessorValueTreeState state;
 
@@ -45,6 +46,7 @@ private:
     std::array<juce::String, 4> slotPaths;
     std::array<juce::dsp::Convolution, 2> irs;
     std::array<bool, 2> irLoaded {{ false, false }};
+    std::array<std::array<float, 128>, 2> irPeaks {};
 
     juce::AudioBuffer<float> irScratchA, irScratchB;
     std::vector<float> mono, namA, namB;
@@ -55,6 +57,13 @@ private:
         float cabinetHP = 0, cabinetLP = 0;
     };
     std::array<ToneState, 2> toneStates;
+    struct MicColourState
+    {
+        float low = 0.0f;
+        float high = 0.0f;
+    };
+    std::array<std::array<MicColourState, 2>, 2> micStates {}; // [IR slot][channel]
+
     std::array<std::vector<float>, 2> delayLines;
     size_t delayPosition = 0;
     float gateEnvelope = 0.0f, gateGain = 1.0f;

@@ -1,33 +1,56 @@
 #!/usr/bin/env python3
-"""Cheap local checks before native compilation."""
+"""No-network, no-compilation checks before starting a paid CI build."""
 from pathlib import Path
 import sys
-
 root = Path(__file__).resolve().parents[1]
-required = [
-    "CMakeLists.txt", "README.md", ".github/workflows/build.yml",
-    "Source/PluginProcessor.h", "Source/PluginProcessor.cpp",
-    "Source/PluginEditor.h", "Source/PluginEditor.cpp",
-    "docs/ROADMAP.md",
+paths = [
+    'CMakeLists.txt',
+    'Source/PluginProcessor.h', 'Source/PluginProcessor.cpp',
+    'Source/PluginEditor.h', 'Source/PluginEditor.cpp', 'Source/ArtAssets.h',
+    '.github/workflows/build.yml', 'README.md', 'docs/ROADMAP.md',
 ]
-errors = []
-for name in required:
+errors=[]
+for name in paths:
+    p=root/name
+    if not p.is_file():
+        errors.append(f'Missing: {name}')
+        continue
     try:
-        contents = (root / name).read_text(encoding="utf-8")
-        if not contents.strip():
-            errors.append(f"Empty: {name}")
-    except (OSError, UnicodeError) as e:
-        errors.append(f"Missing or invalid UTF-8: {name}: {e}")
-if not errors:
-    cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    code = (root / "Source/PluginProcessor.cpp").read_text(encoding="utf-8")
-    for word in ("NAM_ENABLE_A2_FAST", "GIT_TAG v0.5.4", "GIT_TAG 8.0.10", "AU VST3 Standalone"):
-        if word not in cmake:
-            errors.append(f"CMake token missing: {word}")
-    for word in ("nam::get_dsp", "loadImpulseResponse", "getStateInformation"):
-        if word not in code:
-            errors.append(f"Audio implementation token missing: {word}")
+        p.read_text(encoding='utf-8')
+    except UnicodeError:
+        errors.append(f'Not UTF-8: {name}')
+cmake = (root/'CMakeLists.txt').read_text(encoding='utf-8')
+processor = (root/'Source/PluginProcessor.cpp').read_text(encoding='utf-8')
+workflow = (root/'.github/workflows/build.yml').read_text(encoding='utf-8')
+checks = {
+    'NAM A2 core pinned': 'GIT_TAG v0.5.4' in cmake and 'NAM_ENABLE_A2_FAST' in cmake,
+    'JUCE pinned': 'GIT_TAG 8.0.10' in cmake,
+    'AU and VST3 targets': 'AU VST3 Standalone' in cmake,
+    'Manual CI and one-time bootstrap': 'workflow_dispatch' in workflow and 'push:' in workflow and '.github/workflows/build.yml' in workflow,
+    'Apple Silicon runner': 'macos-15' in workflow,
+    'Windows x64 runner': 'windows-2022' in workflow,
+    'Two neural slots': 'std::array<std::unique_ptr<nam::DSP>, 2>' in (root/'Source/PluginProcessor.h').read_text(encoding='utf-8'),
+    'Model loading': 'nam::get_dsp(nativePath)' in processor,
+    'WAV convolution': 'loadImpulseResponse' in processor,
+    'Source-state persistence': 'getStateInformation' in processor and 'setStateInformation' in processor,
+    'Mic profile DSP': 'micAType' in processor and 'colourMic' in processor and 'micBOffset' in processor,
+    'Real IR preview': 'irWaveform' in processor and 'AudioFormatReader' in processor,
+    'Functional mic drag UI': 'MicPositionCanvas' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
+}
+for name, ok in checks.items():
+    print(('OK' if ok else 'FAIL') + ' - ' + name)
+    if not ok: errors.append(name)
+# Check common mojibake and replacement glyphs, without scanning Base64 image resources.
+for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
+             'Source/PluginProcessor.cpp', 'Source/PluginProcessor.h']:
+    content = (root / name).read_text(encoding='utf-8')
+    for pattern in ['\ufffd', 'Ã©', 'Ã¨', 'Ãª', 'Ã ', 'â€™', 'â€œ', 'â€', '\u25a1']:
+        if pattern in content:
+            errors.append(f'Mojibake in {name}: {pattern!r}')
 if errors:
-    print("\n".join(errors), file=sys.stderr)
+    print('\nPRE-FLIGHT FAILED: ' + ', '.join(errors), file=sys.stderr)
     sys.exit(1)
-print("Preflight OK (no actual compilation or DSP verification performed).")
+# Independent mathematical layout audit, no JUCE binaries required.
+import subprocess
+subprocess.run([sys.executable, str(root / 'scripts/check_geometry.py')], check=True)
+print('\nPRE-FLIGHT PASSED. NOTE: this does not compile or run DSP.')

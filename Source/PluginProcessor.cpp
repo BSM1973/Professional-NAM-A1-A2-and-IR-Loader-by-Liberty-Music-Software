@@ -49,6 +49,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout LibertyNeuralMatrixAudioProc
     addFloat("gateThreshold", "Seuil gate (dBFS)", -80.0f, -20.0f, -55.0f);
     addBool("boostOn", "Boost pré NAM +6 dB", false);
     addBool("delayOn", "Activer delay", false);
+    // Microphone families are original post-IR tone profiles, not physical remiking.
+    const juce::StringArray micChoices { "Neutre", "Dynamique type 57", "Dynamique type 421",
+                                         "Condensateur type 87", "Lampe type 47", "Ruban type 121" };
+    p.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "micAType", 1 }, "Profil micro A", micChoices, 0));
+    p.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "micBType", 1 }, "Profil micro B", micChoices, 0));
+    addFloat("micAOffset", "Micro A hors axe (%)", 0.0f, 100.0f, 0.0f);
+    addFloat("micBOffset", "Micro B hors axe (%)", 0.0f, 100.0f, 0.0f);
+    addFloat("micADistance", "Distance micro A (cm)", 0.0f, 80.0f, 10.0f);
+    addFloat("micBDistance", "Distance micro B (cm)", 0.0f, 80.0f, 10.0f);
     addFloat("delayMs", "Temps delay (ms)", 60.0f, 1200.0f, 320.0f);
     addFloat("delayFeedback", "Feedback delay", 0.0f, 0.85f, 0.30f);
     addFloat("delayMix", "Mix delay", 0.0f, 0.70f, 0.20f);
@@ -79,6 +90,7 @@ void LibertyNeuralMatrixAudioProcessor::prepareToPlay(double sampleRate, int sam
     gateEnvelope = 0.0f;
     gateGain = 1.0f;
     toneStates = {};
+    micStates = {};
     delayPosition = 0;
     const size_t delaySize = static_cast<size_t>(std::ceil(1.25 * sampleRate)) + 16u;
     for (auto& line : delayLines) line.assign(delaySize, 0.0f);
@@ -147,11 +159,31 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
     {
         // JUCE convolution resamples and prepares the IR internally. No file I/O in processBlock.
         const int idx = slot - 2;
+        // Read a capped preview on the message thread. No audio-thread decoding.
+        std::array<float, 128> preview {};
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+        if (!reader || reader->lengthInSamples <= 0 || reader->numChannels == 0)
+            return juce::Result::fail("IR WAV illisible ou vide.");
+        const int previewSamples = static_cast<int>(juce::jmin<juce::int64>(reader->lengthInSamples, 192000));
+        juce::AudioBuffer<float> samples(static_cast<int>(juce::jmin<unsigned int>(reader->numChannels, 2u)), previewSamples);
+        if (!reader->read(&samples, 0, previewSamples, 0, true, true))
+            return juce::Result::fail("Impossible de décoder cette IR.");
+        for (int index = 0; index < previewSamples; ++index)
+        {
+            const int bin = juce::jmin(127, index * 128 / previewSamples);
+            float level = std::abs(samples.getSample(0, index));
+            if (samples.getNumChannels() > 1)
+                level = juce::jmax(level, std::abs(samples.getSample(1, index)));
+            preview[(size_t) bin] = juce::jmax(preview[(size_t) bin], level);
+        }
         irs[(size_t) idx].loadImpulseResponse(file, juce::dsp::Convolution::Stereo::yes,
              juce::dsp::Convolution::Trim::yes, 0, juce::dsp::Convolution::Normalise::no);
         const juce::ScopedLock lock(modelMutex);
         slotPaths[(size_t) slot] = file.getFullPathName();
         irLoaded[(size_t) idx] = true;
+        irPeaks[(size_t) idx] = preview;
     }
     return juce::Result::ok();
 }
@@ -161,6 +193,13 @@ juce::String LibertyNeuralMatrixAudioProcessor::slotDisplayName(int slot) const
     if (!juce::isPositiveAndBelow(slot, 4)) return {};
     const juce::ScopedLock lock(const_cast<juce::CriticalSection&>(modelMutex));
     return slotPaths[(size_t) slot].isEmpty() ? "Charger un fichier" : juce::File(slotPaths[(size_t) slot]).getFileName();
+}
+
+std::array<float, 128> LibertyNeuralMatrixAudioProcessor::irWaveform(int index) const
+{
+    if (!juce::isPositiveAndBelow(index, 2)) return {};
+    const juce::ScopedLock lock(const_cast<juce::CriticalSection&>(modelMutex));
+    return irPeaks[(size_t) index];
 }
 
 void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -189,6 +228,59 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
     const float presenceGain = dbToGain(value("presence"));
     const float irAGain = dbToGain(value("irAGain")) * (value("irAPhase") > 0.5f ? -1.0f : 1.0f);
     const float irBGain = dbToGain(value("irBGain")) * (value("irBPhase") > 0.5f ? -1.0f : 1.0f);
+
+    // Simple, transparent post-IR microphone tone profiles. These do not recover the
+    // acoustic information of a microphone captured at a different physical position.
+    struct MicProfile
+    {
+        float cutoff;
+        float low;
+        float body;
+        float air;
+    };
+    const std::array<MicProfile, 6> profiles {{
+        { 18000.0f, 1.00f, 1.00f, 1.00f },
+        { 9800.0f, 1.05f, 1.03f, 0.96f },
+        { 8100.0f, 1.11f, 1.00f, 0.86f },
+        { 15300.0f, 0.96f, 1.00f, 1.10f },
+        { 11600.0f, 1.08f, 1.03f, 0.96f },
+        { 6500.0f, 1.14f, 0.96f, 0.75f }
+    }};
+    struct MicCoefficients
+    {
+        float lowGain = 1.0f, bodyGain = 1.0f, highGain = 1.0f, lowCoef = 0.0f, highCoef = 0.0f;
+        bool bypass = true;
+    };
+    std::array<MicCoefficients, 2> mic {};
+    for (int mi = 0; mi < 2; ++mi)
+    {
+        const char* type = mi == 0 ? "micAType" : "micBType";
+        const char* offset = mi == 0 ? "micAOffset" : "micBOffset";
+        const char* distance = mi == 0 ? "micADistance" : "micBDistance";
+        const auto typeIndex = juce::jlimit(0, 5, static_cast<int>(std::round(value(type))));
+        const auto offAxis = juce::jlimit(0.0f, 1.0f, value(offset) * 0.01f);
+        const auto metres = juce::jlimit(0.0f, 1.0f, value(distance) / 80.0f);
+        auto profile = profiles[(size_t) typeIndex];
+        auto& c = mic[(size_t) mi];
+        c.bypass = typeIndex == 0 && offAxis < 0.001f && std::abs(value(distance) - 10.0f) < 0.01f;
+        // Off-axis and distance darken the upper spectrum, as an approximation only.
+        const auto cutoff = juce::jlimit(1600.0f, 18000.0f, profile.cutoff * (1.0f - offAxis * 0.73f) * (1.0f - metres * 0.24f));
+        c.lowCoef = onePole(210.0f, preparedRate);
+        c.highCoef = onePole(cutoff, preparedRate);
+        c.lowGain = profile.low * (1.0f + 0.28f * (1.0f - metres));
+        c.bodyGain = profile.body;
+        c.highGain = profile.air * (1.0f - 0.52f * offAxis);
+        if (typeIndex == 0) c.lowGain = 1.0f + 0.16f * (0.125f - metres);
+    }
+    const auto colourMic = [&](int ir, int ch, float sample)
+    {
+        const auto& c = mic[(size_t) ir];
+        if (c.bypass) return sample;
+        auto& st = micStates[(size_t) ir][(size_t) juce::jmin(ch, 1)];
+        st.low += c.lowCoef * (sample - st.low);
+        st.high += c.highCoef * (sample - st.high);
+        return st.low * c.lowGain + (st.high - st.low) * c.bodyGain + (sample - st.high) * c.highGain;
+    };
     const float hpCoeff = onePole(value("cabHP"), preparedRate);
     const float lpCoeff = onePole(value("cabLP"), preparedRate);
     const float lowCoeff = onePole(170.0f, preparedRate);
@@ -293,8 +385,8 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
                 const float t = irBlend.getNextValue();
                 for (int ch = 0; ch < nCh; ++ch)
                 {
-                    const float a = hasIRA ? irScratchA.getSample(ch, i) * irAGain : 0.0f;
-                    const float b = hasIRB ? irScratchB.getSample(ch, i) * irBGain : 0.0f;
+                    const float a = hasIRA ? colourMic(0, ch, irScratchA.getSample(ch, i)) * irAGain : 0.0f;
+                    const float b = hasIRB ? colourMic(1, ch, irScratchB.getSample(ch, i)) * irBGain : 0.0f;
                     float y = hasIRA && hasIRB ? a * (1.0f - t) + b * t : hasIRA ? a : b;
                     auto& eq = toneStates[(size_t) juce::jmin(ch, 1)];
                     eq.cabinetHP += hpCoeff * (y - eq.cabinetHP);

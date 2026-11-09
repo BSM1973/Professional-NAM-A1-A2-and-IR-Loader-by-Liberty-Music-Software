@@ -1,220 +1,318 @@
 #include "PluginEditor.h"
+#include "ArtAssets.h"
+#include <algorithm>
 #include <cmath>
 
 namespace
 {
-const auto charcoal  = juce::Colour::fromRGB(14, 13, 13);
-const auto leather   = juce::Colour::fromRGB(29, 27, 25);
-const auto steel     = juce::Colour::fromRGB(76, 70, 62);
-const auto edge      = juce::Colour::fromRGB(111, 91, 68);
-const auto gold      = juce::Colour::fromRGB(241, 166, 81);
-const auto goldLight = juce::Colour::fromRGB(255, 206, 131);
-const auto text      = juce::Colour::fromRGB(237, 227, 211);
-const auto muted     = juce::Colour::fromRGB(173, 162, 146);
-const auto deep      = juce::Colour::fromRGB(20, 19, 19);
+const auto bg = juce::Colour::fromRGB(13, 12, 12);
+const auto panel = juce::Colour::fromRGB(32, 29, 27);
+const auto panelEdge = juce::Colour::fromRGB(91, 69, 49);
+const auto bronze = juce::Colour::fromRGB(233, 154, 65);
+const auto cream = juce::Colour::fromRGB(245, 232, 214);
+const auto secondary = juce::Colour::fromRGB(185, 176, 162);
+const auto black = juce::Colour::fromRGB(17, 17, 17);
 
-void plate(juce::Graphics& g, juce::Rectangle<int> r, juce::String title, juce::String subtitle)
+void card(juce::Graphics& g, const juce::Rectangle<int>& r, const juce::String& title)
 {
-    auto f = r.toFloat().reduced(1.0f);
-    g.setGradientFill(juce::ColourGradient(leather.brighter(0.07f), f.getTopLeft(),
-                                           charcoal, f.getBottomRight(), false));
-    g.fillRoundedRectangle(f, 15.0f);
-    g.setColour(edge.withAlpha(0.5f));
-    g.drawRoundedRectangle(f, 15.0f, 1.2f);
-    g.setColour(juce::Colours::black.withAlpha(0.40f));
-    g.fillRoundedRectangle(f.reduced(8.0f).removeFromTop(48.0f), 8.0f);
-    g.setColour(gold);
-    g.setFont(juce::Font(juce::FontOptions(19.0f, juce::Font::bold)));
-    g.drawText(title, r.getX()+24, r.getY()+15, r.getWidth()-48, 24, juce::Justification::centredLeft, false);
-    g.setColour(muted);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)));
-    g.drawText(subtitle, r.getX()+22, r.getY()+58, r.getWidth()-44, 22, juce::Justification::centredLeft, false);
-    for (int i = 0; i < 4; ++i)
+    const auto f = r.toFloat();
+    g.setGradientFill(juce::ColourGradient(panel.brighter(0.1f), f.getTopLeft(), bg, f.getBottomRight(), false));
+    g.fillRoundedRectangle(f, 12.0f);
+    g.setColour(panelEdge);
+    g.drawRoundedRectangle(f.reduced(0.5f), 11.5f, 1.0f);
+    const auto top = f.withHeight(46.0f);
+    g.setColour(black);
+    g.fillRoundedRectangle(top.reduced(6.0f, 5.0f), 8.0f);
+    g.setColour(bronze);
+    g.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
+    g.drawFittedText(title, r.withHeight(42).reduced(23, 4), juce::Justification::centredLeft, 1);
+}
+
+void panelLine(juce::Graphics& g, juce::Rectangle<int> area)
+{
+    g.setColour(panelEdge.withAlpha(0.8f));
+    g.drawRoundedRectangle(area.toFloat().reduced(0.8f), 8.0f, 1.1f);
+}
+
+void caption(juce::Graphics& g, juce::String message, juce::Rectangle<int> r,
+             int size = 13, bool bright = false)
+{
+    g.setColour(bright ? cream : secondary);
+    g.setFont(juce::Font(juce::FontOptions((float) size)));
+    g.drawFittedText(message, r, juce::Justification::centredLeft, 1);
+}
+
+juce::Image loadEmbeddedImage(const char* data)
+{
+    juce::MemoryOutputStream decoded;
+    if (!juce::Base64::convertFromBase64(decoded, juce::StringRef(data))) return {};
+    return juce::ImageFileFormat::loadFrom(decoded.getData(), decoded.getDataSize());
+}
+}
+
+class LibertyNeuralMatrixAudioProcessorEditor::IRWaveform final : public juce::Component
+{
+public:
+    explicit IRWaveform(LibertyNeuralMatrixAudioProcessor& p) : processor(p) {}
+    void paint(juce::Graphics& g) override
     {
-        int x = (i & 1) ? r.getRight()-13 : r.getX()+13;
-        int y = (i & 2) ? r.getBottom()-13 : r.getY()+13;
-        g.setColour(steel);
-        g.fillEllipse((float)x-3.0f,(float)y-3.0f,6.0f,6.0f);
-        g.setColour(charcoal);
-        g.drawLine((float)x-2.0f,(float)y+2.0f,(float)x+2.0f,(float)y-2.0f,1.0f);
+        auto area = getLocalBounds().reduced(6);
+        g.setColour(black); g.fillRoundedRectangle(area.toFloat(), 8.0f);
+        g.setColour(panelEdge); g.drawRoundedRectangle(area.toFloat(), 8.0f, 1.0f);
+        const auto waveArea = area.reduced(12, 18);
+        const auto a = processor.irWaveform(0);
+        const auto b = processor.irWaveform(1);
+        const bool hasA = std::any_of(a.begin(), a.end(), [](float x) { return x > 0.00001f; });
+        const bool hasB = std::any_of(b.begin(), b.end(), [](float x) { return x > 0.00001f; });
+        if (!hasA && !hasB)
+        {
+            caption(g, "Chargez une IR pour afficher sa forme d'onde réelle.", waveArea, 13);
+            return;
+        }
+        const float height = static_cast<float>(waveArea.getHeight()) * 0.44f;
+        const float centreY = static_cast<float>(waveArea.getCentreY());
+        for (int track = 0; track < 2; ++track)
+        {
+            if (track == 0 && !hasA) continue;
+            if (track == 1 && !hasB) continue;
+            const auto& peaks = track == 0 ? a : b;
+            const float peak = juce::jmax(0.01f, *std::max_element(peaks.begin(), peaks.end()));
+            g.setColour(track == 0 ? bronze : juce::Colour::fromRGB(108, 194, 207));
+            for (int i = 0; i < 128; ++i)
+            {
+                const auto x = waveArea.getX() + waveArea.getWidth() * (static_cast<float>(i) + 0.5f) / 128.0f;
+                const auto amp = (peaks[(size_t) i] / peak) * height;
+                g.drawLine(x, centreY - amp, x, centreY + amp, 1.25f);
+            }
+        }
+        caption(g, "IR A", {area.getX() + 10, area.getY() + 2, 48, 16}, 11, hasA);
+        caption(g, "IR B", {area.getX() + 66, area.getY() + 2, 48, 16}, 11, hasB);
     }
-}
+private:
+    LibertyNeuralMatrixAudioProcessor& processor;
+};
 
-void speaker(juce::Graphics& g, juce::Rectangle<int> r)
+class LibertyNeuralMatrixAudioProcessorEditor::MicPositionCanvas final : public juce::Component
 {
-    auto bounds = r.toFloat();
-    g.setColour(juce::Colour::fromRGB(45, 44, 43));
-    g.fillRoundedRectangle(bounds, 10.0f);
-    g.setColour(juce::Colours::black.withAlpha(0.24f));
-    for (int y = r.getY()+5; y < r.getBottom()-5; y += 7)
-        g.drawHorizontalLine(y, (float) r.getX()+5.0f, (float) r.getRight()-5.0f);
-    auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight())*0.34f;
-    auto centre = bounds.getCentre();
-    auto circle = juce::Rectangle<float>(2*radius,2*radius).withCentre(centre);
-    g.setColour(juce::Colour::fromRGB(21,20,20));
-    g.fillEllipse(circle);
-    g.setColour(edge.withAlpha(0.75f));
-    g.drawEllipse(circle, 3.0f);
-    g.setColour(steel.darker(0.25f));
-    g.fillEllipse(circle.reduced(radius*0.24f));
-    g.setColour(juce::Colour::fromRGB(13,13,13));
-    g.fillEllipse(circle.reduced(radius*0.58f));
-    g.setColour(gold.withAlpha(0.78f));
-    g.drawEllipse(circle.reduced(radius*0.58f), 1.0f);
-}
-
-void sectionText(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& headline,
-                 const juce::String& details)
-{
-    g.setColour(text);
-    g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-    g.drawText(headline, r.removeFromTop(26), juce::Justification::centredLeft, false);
-    g.setColour(muted);
-    g.setFont(juce::Font(juce::FontOptions(14.0f)));
-    g.drawFittedText(details, r, juce::Justification::topLeft, 5);
-}
-}
+public:
+    MicPositionCanvas(LibertyNeuralMatrixAudioProcessor& p, int idx) : processor(p), index(idx) {}
+    void paint(juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().reduced(3);
+        g.setColour(black); g.fillRoundedRectangle(r.toFloat(), 9.0f);
+        g.setColour(panelEdge); g.drawRoundedRectangle(r.toFloat(), 9.0f, 1.0f);
+        caption(g, index == 0 ? "MICRO A : POSITION" : "MICRO B : POSITION", r.removeFromTop(19).reduced(9, 0), 11, true);
+        auto plot = r.reduced(15, 6);
+        const float xval = processor.state.getRawParameterValue(index == 0 ? "micAOffset" : "micBOffset")->load();
+        const float dval = processor.state.getRawParameterValue(index == 0 ? "micADistance" : "micBDistance")->load();
+        g.setColour(juce::Colour::fromRGB(65, 60, 54));
+        g.fillEllipse(juce::Rectangle<float>(50, 50).withCentre(plot.getCentre().toFloat()));
+        g.setColour(panelEdge);
+        g.drawEllipse(juce::Rectangle<float>(50, 50).withCentre(plot.getCentre().toFloat()), 1.0f);
+        g.drawVerticalLine(plot.getCentreX(), (float) plot.getY(), (float) plot.getBottom());
+        g.drawHorizontalLine(plot.getCentreY(), (float) plot.getX(), (float) plot.getRight());
+        const float px = plot.getCentreX() + (xval * 0.0041f) * plot.getWidth();
+        const float py = plot.getY() + 8.0f + (dval / 80.0f) * (plot.getHeight() - 16.0f);
+        g.setColour(index == 0 ? bronze : juce::Colour::fromRGB(115, 199, 218));
+        g.fillEllipse(px - 7, py - 7, 14, 14);
+        g.setColour(cream); g.drawEllipse(px - 7, py - 7, 14, 14, 1.0f);
+    }
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        const char* xKey = index == 0 ? "micAOffset" : "micBOffset";
+        const char* yKey = index == 0 ? "micADistance" : "micBDistance";
+        for (const auto* id : {xKey, yKey})
+            if (auto* p = processor.state.getParameter(id)) p->beginChangeGesture();
+        applyPosition(e.position);
+    }
+    void mouseDrag(const juce::MouseEvent& e) override { applyPosition(e.position); }
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        const char* xKey = index == 0 ? "micAOffset" : "micBOffset";
+        const char* yKey = index == 0 ? "micADistance" : "micBDistance";
+        for (const auto* id : {xKey, yKey})
+            if (auto* p = processor.state.getParameter(id)) p->endChangeGesture();
+    }
+private:
+    void applyPosition(juce::Point<float> point)
+    {
+        auto plot = getLocalBounds().reduced(3);
+        plot.removeFromTop(19);
+        plot = plot.reduced(15, 6);
+        const float x = 100.0f * juce::jlimit(0.0f, 1.0f,
+            (point.x - plot.getCentreX()) / (0.41f * (float) juce::jmax(1, plot.getWidth())));
+        const float distance = 80.0f * juce::jlimit(0.0f, 1.0f,
+            (point.y - plot.getY() - 8.0f) / (float) juce::jmax(1, plot.getHeight() - 16));
+        auto set = [&](const char* id, float value)
+        {
+            if (auto* p = processor.state.getParameter(id))
+                p->setValueNotifyingHost(p->convertTo0to1(value));
+        };
+        set(index == 0 ? "micAOffset" : "micBOffset", x);
+        set(index == 0 ? "micADistance" : "micBDistance", distance);
+        repaint();
+    }
+    LibertyNeuralMatrixAudioProcessor& processor;
+    int index;
+};
 
 LibertyNeuralMatrixAudioProcessorEditor::HardwareLook::HardwareLook()
 {
-    setColour(juce::TextButton::textColourOffId, text);
-    setColour(juce::TextButton::textColourOnId, goldLight);
-    setColour(juce::Slider::textBoxBackgroundColourId, deep);
+    setColour(juce::TextButton::textColourOffId, cream);
+    setColour(juce::TextButton::textColourOnId, cream);
+    setColour(juce::Slider::textBoxBackgroundColourId, black);
     setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour(juce::Slider::textBoxTextColourId, text);
+    setColour(juce::Slider::textBoxTextColourId, cream);
+    setColour(juce::ComboBox::textColourId, cream);
+    setColour(juce::ComboBox::backgroundColourId, black);
+    setColour(juce::ComboBox::outlineColourId, panelEdge);
+    setColour(juce::ComboBox::arrowColourId, bronze);
+    setColour(juce::PopupMenu::backgroundColourId, panel);
+    setColour(juce::PopupMenu::textColourId, cream);
 }
 
 void LibertyNeuralMatrixAudioProcessorEditor::HardwareLook::drawButtonBackground(
     juce::Graphics& g, juce::Button& button, const juce::Colour&, bool hover, bool down)
 {
-    auto area = button.getLocalBounds().toFloat().reduced(1.0f);
-    auto active = button.getToggleState();
-    auto colour = active ? juce::Colour::fromRGB(82, 56, 28) : juce::Colour::fromRGB(43, 40, 37);
-    if (hover) colour = colour.brighter(0.12f);
-    if (down) colour = colour.brighter(0.21f);
-    g.setGradientFill(juce::ColourGradient(colour.brighter(0.09f), area.getTopLeft(),
-                                           colour.darker(0.14f), area.getBottomLeft(), false));
-    g.fillRoundedRectangle(area, 8.0f);
-    g.setColour(active ? gold : edge.withAlpha(0.64f));
-    g.drawRoundedRectangle(area, 8.0f, active ? 1.8f : 1.0f);
+    auto r = button.getLocalBounds().toFloat().reduced(1.0f);
+    auto c = button.getToggleState() ? juce::Colour::fromRGB(105, 65, 30) : panel;
+    if (hover) c = c.brighter(0.18f);
+    if (down) c = c.brighter(0.10f);
+    g.setGradientFill(juce::ColourGradient(c.brighter(0.1f), r.getTopLeft(), c.darker(0.14f), r.getBottomLeft(), false));
+    g.fillRoundedRectangle(r, 7.0f);
+    g.setColour(button.getToggleState() ? bronze : panelEdge);
+    g.drawRoundedRectangle(r, 7.0f, 1.0f);
 }
 
 void LibertyNeuralMatrixAudioProcessorEditor::HardwareLook::drawRotarySlider(
     juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&)
 {
-    const float diameter = juce::jmax(26.0f, juce::jmin((float) w - 28.0f, (float)h - 26.0f));
-    const auto cx = x + w*0.5f, cy = y+h*0.5f;
-    auto knob = juce::Rectangle<float>(diameter, diameter).withCentre(juce::Point<float>(cx,cy));
-    g.setColour(juce::Colours::black.withAlpha(0.60f));
-    g.fillEllipse(knob.translated(0.0f,3.0f));
-    g.setGradientFill(juce::ColourGradient(juce::Colour::fromRGB(103,99,92), knob.getTopLeft(),
-                                           juce::Colour::fromRGB(37,36,35), knob.getBottomRight(), false));
+    const auto diameter = juce::jmax(24.0f, juce::jmin((float) w - 34.0f, (float) h - 38.0f));
+    const auto cx = x + w * 0.5f, cy = y + (h - 15) * 0.5f;
+    const auto knob = juce::Rectangle<float>(diameter, diameter).withCentre({cx, cy});
+    g.setGradientFill(juce::ColourGradient(juce::Colour::fromRGB(140, 134, 123), knob.getTopLeft(),
+                                           juce::Colour::fromRGB(42, 39, 37), knob.getBottomRight(), false));
     g.fillEllipse(knob);
-    g.setColour(edge);
-    g.drawEllipse(knob, 2.0f);
-    g.setColour(charcoal.withAlpha(0.65f));
-    g.drawEllipse(knob.reduced(6.0f), 1.2f);
-    const float radius = diameter*0.5f + 5.0f;
+    g.setColour(panelEdge); g.drawEllipse(knob, 1.5f);
+    const auto radius = diameter * 0.5f + 3.0f;
     juce::Path whole, active;
-    whole.addCentredArc(cx,cy,radius,radius,0.0f,start,end,true);
-    active.addCentredArc(cx,cy,radius,radius,0.0f,start,start+(end-start)*pos,true);
-    g.setColour(steel);
-    g.strokePath(whole,juce::PathStrokeType(3.0f));
-    g.setColour(gold);
-    g.strokePath(active,juce::PathStrokeType(3.3f));
-    const float angle = start+(end-start)*pos;
-    g.setColour(goldLight);
-    g.drawLine(cx,cy,cx+std::sin(angle)*(diameter*0.32f),cy-std::cos(angle)*(diameter*0.32f),3.0f);
+    whole.addCentredArc(cx, cy, radius, radius, 0, start, end, true);
+    active.addCentredArc(cx, cy, radius, radius, 0, start, start + (end - start) * pos, true);
+    g.setColour(panelEdge); g.strokePath(whole, juce::PathStrokeType(3.0f));
+    g.setColour(bronze); g.strokePath(active, juce::PathStrokeType(3.2f));
+    const auto angle = start + (end - start) * pos;
+    g.setColour(cream);
+    g.drawLine(cx, cy, cx + std::sin(angle) * diameter * 0.34f,
+               cy - std::cos(angle) * diameter * 0.34f, 2.4f);
 }
 
 LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor(
-    LibertyNeuralMatrixAudioProcessor& p) : juce::AudioProcessorEditor(&p), processor(p)
+    LibertyNeuralMatrixAudioProcessor& p)
+    : juce::AudioProcessorEditor(&p), processor(p)
 {
     setLookAndFeel(&hardware);
-    const std::array<const char*,4> titles{"AMPLI","BAFFLES","EFFETS","RÉGLAGES"};
-    for(int i=0;i<4;++i)
-    {
-        auto& button=nav[(size_t)i];
-        button.setButtonText(titles[(size_t)i]);
-        button.onClick=[this,i]{showPage((Page)i);};
-        addAndMakeVisible(button);
-    }
-    const std::array<const char*,4> loaders{"CHARGER NAM A","CHARGER NAM B","CHARGER IR A","CHARGER IR B"};
-    for(int i=0;i<4;++i)
-    {
-        auto& b=load[(size_t)i];
-        b.setButtonText(loaders[(size_t)i]);
-        b.onClick=[this,i]{loadFile(i);};
-        addAndMakeVisible(b);
-        auto& f=filename[(size_t)i];
-        f.setColour(juce::Label::textColourId,text);
-        f.setJustificationType(juce::Justification::centredLeft);
-        f.setFont(juce::Font(juce::FontOptions(13.0f)));
-        addAndMakeVisible(f);
-    }
+    ampImage = loadEmbeddedImage(libertyArt::ampJpeg);
+    cabImage = loadEmbeddedImage(libertyArt::cabJpeg);
 
-    auto setupKnobs=[this](auto& sliders,auto& captions,auto& attachments,
-                           const std::array<const char*,4>& ids,
-                           const std::array<const char*,4>& names)
+    const std::array<juce::String,4> tabs {{ "AMPLI", "BAFFLES / IR", "EFFETS", "RÉGLAGES" }};
+    const std::array<juce::String,4> loadNames {{ "CHARGER NAM A", "CHARGER NAM B", "CHARGER IR A", "CHARGER IR B" }};
+    for (int i = 0; i < 4; ++i)
     {
-        for(int i=0;i<4;++i)
+        nav[(size_t)i].setButtonText(tabs[(size_t)i]);
+        nav[(size_t)i].onClick = [this,i] { showPage(static_cast<Page>(i)); };
+        addAndMakeVisible(nav[(size_t)i]);
+        load[(size_t)i].setButtonText(loadNames[(size_t)i]);
+        load[(size_t)i].onClick = [this,i] { loadFile(i); };
+        addAndMakeVisible(load[(size_t)i]);
+        filename[(size_t)i].setColour(juce::Label::textColourId, cream);
+        filename[(size_t)i].setFont(juce::Font(juce::FontOptions(13.0f)));
+        filename[(size_t)i].setMinimumHorizontalScale(0.6f);
+        filename[(size_t)i].setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(filename[(size_t)i]);
+    }
+    auto createSliders = [this](auto& sliders, auto& captions, auto& attach,
+                                const std::array<const char*,4>& ids,
+                                const std::array<juce::String,4>& names)
+    {
+        for (int i = 0; i < 4; ++i)
         {
-            auto& slider=sliders[(size_t)i];
-            slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,82,23);
-            slider.setVelocityModeParameters(0.9,1,0.0,false);
-            addAndMakeVisible(slider);
-            auto& label=captions[(size_t)i];
-            label.setText(names[(size_t)i],juce::dontSendNotification);
-            label.setColour(juce::Label::textColourId,text);
-            label.setFont(juce::Font(juce::FontOptions(13.0f,juce::Font::bold)));
-            label.setJustificationType(juce::Justification::centred);
-            addAndMakeVisible(label);
-            attachments[(size_t)i]=std::make_unique<SliderAttachment>(processor.state,ids[(size_t)i],slider);
+            auto& s = sliders[(size_t)i];
+            s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+            s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 81, 22);
+            addAndMakeVisible(s);
+            auto& c = captions[(size_t)i];
+            c.setText(names[(size_t)i], juce::dontSendNotification);
+            c.setColour(juce::Label::textColourId, cream);
+            c.setJustificationType(juce::Justification::centred);
+            c.setFont(juce::Font(juce::FontOptions(12.7f, juce::Font::bold)));
+            c.setMinimumHorizontalScale(0.75f);
+            addAndMakeVisible(c);
+            attach[(size_t)i] = std::make_unique<SliderAttachment>(processor.state, ids[(size_t)i], s);
         }
     };
-    setupKnobs(masterSliders,masterCaptions,masterAttachments,
-               {{"input","nammix","irmix","output"}},
-               {{"ENTRÉE dB","MIX NAM A/B","MIX IR A/B","SORTIE dB"}});
-    setupKnobs(ampSliders,ampCaptions,ampAttachments,
-               {{"bass","middle","treble","presence"}},
-               {{"GRAVES dB","MÉDIUMS dB","AIGUS dB","PRÉSENCE dB"}});
-    setupKnobs(cabSliders,cabCaptions,cabAttachments,
-               {{"irAGain","irBGain","cabHP","cabLP"}},
-               {{"NIVEAU IR A dB","NIVEAU IR B dB","COUPE-BAS Hz","COUPE-HAUT Hz"}});
-    setupKnobs(fxSliders,fxCaptions,fxAttachments,
-               {{"gateThreshold","delayMs","delayFeedback","delayMix"}},
-               {{"SEUIL GATE dBFS","TEMPS ms","FEEDBACK","MIX DELAY"}});
+    createSliders(masterSliders, masterCaptions, masterAttach,
+                  {{"input","nammix","irmix","output"}},
+                  {{"ENTRÉE","MIX NAM A/B","MIX IR A/B","SORTIE"}});
+    createSliders(ampSliders, ampCaptions, ampAttach,
+                  {{"bass","middle","treble","presence"}},
+                  {{"GRAVES","MÉDIUMS","AIGUS","PRÉSENCE"}});
+    createSliders(cabSliders, cabCaptions, cabAttach,
+                  {{"irAGain","irBGain","cabHP","cabLP"}},
+                  {{"NIVEAU IR A","NIVEAU IR B","COUPE-BAS","COUPE-HAUT"}});
+    createSliders(fxSliders, fxCaptions, fxAttach,
+                  {{"gateThreshold","delayMs","delayFeedback","delayMix"}},
+                  {{"SEUIL GATE","TEMPS DELAY","RÉINJECTION","MIX DELAY"}});
+    createSliders(micSliders, micCaptions, micAttach,
+                  {{"micAOffset","micADistance","micBOffset","micBDistance"}},
+                  {{"MICRO A - AXE","MICRO A - CM","MICRO B - AXE","MICRO B - CM"}});
 
-    const std::array<const char*,7> switchesIds{"ampOn","cabOn","irAPhase","irBPhase","gateOn","boostOn","delayOn"};
-    const std::array<const char*,7> switchesTitles{"AMPLI ACTIF","BAFFLE ACTIF","INVERSER IR A","INVERSER IR B","GATE ACTIF","BOOST +6 dB","DELAY ACTIF"};
-    for(int i=0;i<7;++i)
+    const std::array<const char*,7> ids {{"ampOn","cabOn","irAPhase","irBPhase","gateOn","boostOn","delayOn"}};
+    const std::array<juce::String,7> titles {{"AMPLI ACTIF","BAFFLE ACTIF","PHASE A","PHASE B","GATE ACTIF","BOOST +6 dB","DELAY ACTIF"}};
+    for (int i = 0; i < 7; ++i)
     {
-        auto& b=switches[(size_t)i];
-        b.setButtonText(switchesTitles[(size_t)i]);
-        b.setClickingTogglesState(true);
-        addAndMakeVisible(b);
-        switchAttachments[(size_t)i]=std::make_unique<ButtonAttachment>(processor.state,switchesIds[(size_t)i],b);
+        switches[(size_t)i].setButtonText(titles[(size_t)i]);
+        switches[(size_t)i].setClickingTogglesState(true);
+        addAndMakeVisible(switches[(size_t)i]);
+        switchAttach[(size_t)i] = std::make_unique<ButtonAttachment>(processor.state, ids[(size_t)i], switches[(size_t)i]);
     }
-    const std::array<const char*,3> selections{"A","50 / 50","B"};
-    for(int i=0;i<3;++i)
+    const std::array<juce::String,3> modes {{"A","50 / 50","B"}};
+    for (int i = 0; i < 3; ++i)
     {
-        const float value=i==0?0.0f:i==1?0.5f:1.0f;
-        ampSelect[(size_t)i].setButtonText(selections[(size_t)i]);
-        ampSelect[(size_t)i].onClick=[this,value]{selectBlend(true,value);};
+        const auto val = i == 0 ? 0.0f : i == 1 ? 0.5f : 1.0f;
+        ampSelect[(size_t)i].setButtonText(modes[(size_t)i]);
+        ampSelect[(size_t)i].onClick = [this,val]{ selectBlend(true,val); };
         addAndMakeVisible(ampSelect[(size_t)i]);
-        cabSelect[(size_t)i].setButtonText(selections[(size_t)i]);
-        cabSelect[(size_t)i].onClick=[this,value]{selectBlend(false,value);};
+        cabSelect[(size_t)i].setButtonText(modes[(size_t)i]);
+        cabSelect[(size_t)i].onClick = [this,val]{ selectBlend(false,val); };
         addAndMakeVisible(cabSelect[(size_t)i]);
     }
-    feedback.setText("NAM A1/A2 + IR WAV · Édition temps réel · Contrôles automatisables",juce::dontSendNotification);
-    feedback.setColour(juce::Label::textColourId,muted);
-    feedback.setJustificationType(juce::Justification::centredLeft);
+    const juce::StringArray profiles {{ "Neutre", "Dynamique type 57", "Dynamique type 421",
+                                       "Condensateur type 87", "Lampe type 47", "Ruban type 121" }};
+    for (int i = 0; i < 2; ++i)
+    {
+        auto& box = micTypes[(size_t)i];
+        box.addItemList(profiles, 1);
+        addAndMakeVisible(box);
+        micTypeAttach[(size_t)i] = std::make_unique<ComboAttachment>(
+            processor.state, i == 0 ? "micAType" : "micBType", box);
+        auto& label = micTypeLabels[(size_t)i];
+        label.setText(i == 0 ? "TYPE MICRO A" : "TYPE MICRO B", juce::dontSendNotification);
+        label.setColour(juce::Label::textColourId, cream);
+        label.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        addAndMakeVisible(label);
+        micCanvases[(size_t)i] = std::make_unique<MicPositionCanvas>(processor, i);
+        addAndMakeVisible(*micCanvases[(size_t)i]);
+    }
+    waveform = std::make_unique<IRWaveform>(processor);
+    addAndMakeVisible(*waveform);
+    feedback.setColour(juce::Label::textColourId, secondary);
     feedback.setFont(juce::Font(juce::FontOptions(12.5f)));
+    feedback.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(feedback);
-    setSize(1400,840);
-    setResizable(true,true);
-    setResizeLimits(1180,820,1800,1080);
+    feedback.setText("Interface guitare. Profils micro = simulation après IR, non mesure acoustique.", juce::dontSendNotification);
+    setSize(1560, 980);
+    setResizable(true, true);
+    setResizeLimits(1370, 930, 1860, 1200);
     showPage(Page::amp);
     startTimerHz(4);
 }
@@ -225,294 +323,327 @@ LibertyNeuralMatrixAudioProcessorEditor::~LibertyNeuralMatrixAudioProcessorEdito
     setLookAndFeel(nullptr);
 }
 
+void LibertyNeuralMatrixAudioProcessorEditor::showFeedback(const juce::String& s)
+{
+    feedback.setText(s, juce::dontSendNotification);
+}
+
 void LibertyNeuralMatrixAudioProcessorEditor::timerCallback()
 {
-    refreshSelection();
+    refreshFromProcessor();
+    if (page == Page::cab)
+    {
+        waveform->repaint();
+        for (auto& mic : micCanvases) mic->repaint();
+    }
 }
 
-void LibertyNeuralMatrixAudioProcessorEditor::selectBlend(bool amp,float blend)
+void LibertyNeuralMatrixAudioProcessorEditor::selectBlend(bool isNam, float blend)
 {
-    if(auto* param=processor.state.getParameter(amp?"nammix":"irmix"))
+    if (auto* param = processor.state.getParameter(isNam ? "nammix" : "irmix"))
+    {
+        param->beginChangeGesture();
         param->setValueNotifyingHost(blend);
-    refreshSelection();
+        param->endChangeGesture();
+    }
+    refreshFromProcessor();
 }
 
-void LibertyNeuralMatrixAudioProcessorEditor::refreshSelection()
+void LibertyNeuralMatrixAudioProcessorEditor::refreshFromProcessor()
 {
-    auto update=[this](auto& buttons,const char* id)
+    for (int i = 0; i < 4; ++i)
     {
-        const float v=processor.state.getRawParameterValue(id)->load();
-        const int selected=v<0.04f?0:v>0.96f?2:std::abs(v-0.5f)<0.04f?1:-1;
-        for(int i=0;i<3;++i)
-            buttons[(size_t)i].setToggleState(selected==i,juce::dontSendNotification);
+        const auto name = processor.slotDisplayName(i);
+        if (name != filename[(size_t)i].getText()) filename[(size_t)i].setText(name, juce::dontSendNotification);
+        filename[(size_t)i].setTooltip(name);
+    }
+    auto refresh = [this](auto& group, const char* paramId)
+    {
+        auto* value = processor.state.getRawParameterValue(paramId);
+        if (value == nullptr) return;
+        const float v = value->load();
+        const int active = v < 0.03f ? 0 : v > 0.97f ? 2 : std::abs(v-0.5f) < 0.03f ? 1 : -1;
+        for (int i = 0; i < 3; ++i)
+            group[(size_t)i].setToggleState(i == active, juce::dontSendNotification);
     };
-    update(ampSelect,"nammix");
-    update(cabSelect,"irmix");
+    refresh(ampSelect, "nammix");
+    refresh(cabSelect, "irmix");
 }
 
-void LibertyNeuralMatrixAudioProcessorEditor::showPage(Page page)
+void LibertyNeuralMatrixAudioProcessorEditor::showPage(Page next)
 {
-    currentPage=page;
-    for(int i=0;i<4;++i)
+    page = next;
+    for (int i = 0; i < 4; ++i)
     {
-        nav[(size_t)i].setToggleState(i==(int)page,juce::dontSendNotification);
-        const bool visible=(page==Page::amp&&i<2)||(page==Page::cab&&i>=2);
+        nav[(size_t)i].setToggleState(static_cast<int>(page) == i, juce::dontSendNotification);
+        const bool visible = (page == Page::amp && i < 2) || (page == Page::cab && i >= 2);
         load[(size_t)i].setVisible(visible);
         filename[(size_t)i].setVisible(visible);
+        ampSliders[(size_t)i].setVisible(page == Page::amp);
+        ampCaptions[(size_t)i].setVisible(page == Page::amp);
+        cabSliders[(size_t)i].setVisible(page == Page::cab);
+        cabCaptions[(size_t)i].setVisible(page == Page::cab);
+        fxSliders[(size_t)i].setVisible(page == Page::fx);
+        fxCaptions[(size_t)i].setVisible(page == Page::fx);
+        micSliders[(size_t)i].setVisible(page == Page::cab);
+        micCaptions[(size_t)i].setVisible(page == Page::cab);
+        masterSliders[(size_t)i].setVisible(page != Page::cab);
+        masterCaptions[(size_t)i].setVisible(page != Page::cab);
     }
-    for(auto& button:ampSelect)button.setVisible(page==Page::amp);
-    for(auto& button:cabSelect)button.setVisible(page==Page::cab);
-    auto showKnobs=[&](auto& sliders,auto& captions,bool visible)
+    for (int i = 0; i < 3; ++i)
     {
-        for(int i=0;i<4;++i)
-        {
-            sliders[(size_t)i].setVisible(visible);
-            captions[(size_t)i].setVisible(visible);
-        }
-    };
-    showKnobs(ampSliders,ampCaptions,page==Page::amp);
-    showKnobs(cabSliders,cabCaptions,page==Page::cab);
-    showKnobs(fxSliders,fxCaptions,page==Page::fx);
-    for(int i=0;i<7;++i)
+        ampSelect[(size_t)i].setVisible(page == Page::amp);
+        cabSelect[(size_t)i].setVisible(page == Page::cab);
+    }
+    for (int i = 0; i < 7; ++i)
     {
-        const bool visible=(page==Page::amp&&i==0)||(page==Page::cab&&i>=1&&i<=3)
-                           ||(page==Page::fx&&i>=4)||(page==Page::settings&&i<=1);
+        const bool visible = (page == Page::amp && i == 0)
+                          || (page == Page::cab && i >= 1 && i <= 3)
+                          || (page == Page::fx && i >= 4)
+                          || (page == Page::settings && i <= 1);
         switches[(size_t)i].setVisible(visible);
     }
+    for (int i = 0; i < 2; ++i)
+    {
+        micTypes[(size_t)i].setVisible(page == Page::cab);
+        micTypeLabels[(size_t)i].setVisible(page == Page::cab);
+        micCanvases[(size_t)i]->setVisible(page == Page::cab);
+    }
+    waveform->setVisible(page == Page::cab);
     resized();
     repaint();
-}
-
-void LibertyNeuralMatrixAudioProcessorEditor::showFeedback(const juce::String& message)
-{
-    feedback.setText(message,juce::dontSendNotification);
 }
 
 void LibertyNeuralMatrixAudioProcessorEditor::loadFile(int slot)
 {
     juce::Component::SafePointer<LibertyNeuralMatrixAudioProcessorEditor> safe(this);
-    chooser[(size_t)slot]=std::make_unique<juce::FileChooser>(
-        slot<2?"Choisir une capture NAM":"Choisir une réponse impulsionnelle WAV",
-        juce::File{},slot<2?"*.nam":"*.wav");
+    chooser[(size_t)slot] = std::make_unique<juce::FileChooser>(
+        slot < 2 ? "Choisir une capture NAM" : "Choisir une réponse impulsionnelle WAV",
+        juce::File {}, slot < 2 ? "*.nam" : "*.wav");
     chooser[(size_t)slot]->launchAsync(
-        juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,
-        [safe,slot](const juce::FileChooser& selected)
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe, slot](const juce::FileChooser& selected)
         {
-            if(safe==nullptr)return;
-            const auto file=selected.getResult();
-            if(!file.existsAsFile())return;
-            const auto result=safe->processor.loadFile(slot,file);
-            if(result.wasOk())
+            if (safe == nullptr) return;
+            const auto file = selected.getResult();
+            if (!file.existsAsFile()) return;
+            const auto result = safe->processor.loadFile(slot, file);
+            if (result.wasOk())
             {
-                safe->filename[(size_t)slot].setText(file.getFileName(),juce::dontSendNotification);
-                safe->showFeedback("Chargement réussi : "+file.getFileName());
+                safe->showFeedback("Chargement réussi : " + file.getFileName());
+                safe->refreshFromProcessor();
+                if (slot >= 2) safe->waveform->repaint();
             }
-            else safe->showFeedback("Échec du chargement : "+result.getErrorMessage());
+            else safe->showFeedback("Erreur : " + result.getErrorMessage());
         });
 }
 
-void LibertyNeuralMatrixAudioProcessorEditor::layoutSliderGrid(
-    juce::Rectangle<int> zone,std::array<juce::Slider,4>& sliders,std::array<juce::Label,4>& labels)
+void LibertyNeuralMatrixAudioProcessorEditor::layoutRow(
+    juce::Rectangle<int> zone, std::array<juce::Slider,4>& sliders, std::array<juce::Label,4>& labels)
 {
-    const int gap=12;
-    const int cellWidth=(zone.getWidth()-gap)/2;
-    const int cellHeight=(zone.getHeight()-gap)/2;
-    for(int i=0;i<4;++i)
+    const int gap = 10;
+    const int w = (zone.getWidth() - gap * 3) / 4;
+    for (int i = 0; i < 4; ++i)
     {
-        auto cell=juce::Rectangle<int>(zone.getX()+(i%2)*(cellWidth+gap),
-                                       zone.getY()+(i/2)*(cellHeight+gap),cellWidth,cellHeight);
-        labels[(size_t)i].setBounds(cell.removeFromTop(23));
-        sliders[(size_t)i].setBounds(cell.reduced(4,0));
+        auto cell = juce::Rectangle<int>(zone.getX() + i * (w+gap), zone.getY(), w, zone.getHeight());
+        labels[(size_t)i].setBounds(cell.removeFromTop(18));
+        sliders[(size_t)i].setBounds(cell.reduced(2, 0));
     }
 }
 
-void LibertyNeuralMatrixAudioProcessorEditor::layoutMaster(juce::Rectangle<int> zone)
+void LibertyNeuralMatrixAudioProcessorEditor::layoutGrid(
+    juce::Rectangle<int> zone, std::array<juce::Slider,4>& sliders, std::array<juce::Label,4>& labels)
 {
-    const int gap=10;
-    const int cellWidth=(zone.getWidth()-gap*3)/4;
-    for(int i=0;i<4;++i)
+    const int gap = 8;
+    const int w = (zone.getWidth() - gap) / 2;
+    const int h = (zone.getHeight() - gap) / 2;
+    for (int i = 0; i < 4; ++i)
     {
-        auto cell=juce::Rectangle<int>(zone.getX()+i*(cellWidth+gap),zone.getY(),cellWidth,zone.getHeight());
-        masterCaptions[(size_t)i].setBounds(cell.removeFromTop(22));
-        masterSliders[(size_t)i].setBounds(cell.reduced(12,0));
+        auto cell = juce::Rectangle<int>(zone.getX()+(i % 2)*(w+gap),
+                                         zone.getY()+(i / 2)*(h+gap), w, h);
+        labels[(size_t)i].setBounds(cell.removeFromTop(19));
+        sliders[(size_t)i].setBounds(cell.reduced(3, 0));
     }
 }
 
 void LibertyNeuralMatrixAudioProcessorEditor::resized()
 {
-    auto inner=getLocalBounds().reduced(17);
-    inner.removeFromTop(77);
-    auto navArea=inner.removeFromTop(48).reduced(5,6);
-    const int navGap=10;
-    const int navW=(navArea.getWidth()-3*navGap)/4;
-    for(int i=0;i<4;++i)
-        nav[(size_t)i].setBounds(navArea.getX()+i*(navW+navGap),navArea.getY(),navW,navArea.getHeight());
-
-    auto foot=inner.removeFromBottom(30);
-    feedback.setBounds(foot.reduced(14,0));
-    auto master=inner.removeFromBottom(164);
-    layoutMaster(master.reduced(30,40).withTrimmedTop(8));
-    auto main=inner.reduced(0,8);
-
-    const int half=(main.getWidth()-16)/2;
-    auto left=main.removeFromLeft(half);
-    main.removeFromLeft(16);
-    auto right=main;
-
-    if(currentPage==Page::amp || currentPage==Page::cab)
+    auto pageArea = getLocalBounds().reduced(16);
+    pageArea.removeFromTop(76);
+    auto navigation = pageArea.removeFromTop(48).reduced(8, 7);
+    for (int i = 0; i < 4; ++i)
     {
-        const bool amp=currentPage==Page::amp;
-        const int first=amp?0:2;
-        auto cards=left.reduced(22,84);
-        const int gap=16;
-        const int cardH=(cards.getHeight()-gap)/2;
-        for(int i=0;i<2;++i)
-        {
-            auto card=juce::Rectangle<int>(cards.getX(),cards.getY()+i*(cardH+gap),cards.getWidth(),cardH);
-            const int inset=amp?18:130;
-            load[(size_t)(first+i)].setBounds(card.getX()+inset,card.getY()+45,
-                                                juce::jmax(80,card.getWidth()-inset-18),36);
-            filename[(size_t)(first+i)].setBounds(card.getX()+inset,card.getY()+84,
-                                                    juce::jmax(80,card.getWidth()-inset-18),25);
-        }
-        auto selectorArea=right.reduced(25,84);
-        selectorArea.removeFromTop(12);
-        auto buttons=selectorArea.removeFromTop(36);
-        auto& controls=amp?ampSelect:cabSelect;
-        const int width=(buttons.getWidth()-20)/3;
-        for(int i=0;i<3;++i)
-            controls[(size_t)i].setBounds(buttons.getX()+i*(width+10),buttons.getY(),width,36);
-        selectorArea.removeFromTop(15);
-        auto knobArea=selectorArea.removeFromTop(juce::jmax(170,selectorArea.getHeight()-65));
-        if(amp)layoutSliderGrid(knobArea,ampSliders,ampCaptions);
-        else layoutSliderGrid(knobArea,cabSliders,cabCaptions);
-        if(amp)
-            switches[0].setBounds(right.getX()+right.getWidth()-165,right.getBottom()-55,145,31);
-        else
-        {
-            const int swY=right.getBottom()-57;
-            switches[1].setBounds(right.getX()+18,swY,140,31);
-            switches[2].setBounds(right.getX()+168,swY,140,31);
-            switches[3].setBounds(right.getX()+318,swY,140,31);
-        }
+        const int space = 8;
+        const int width = (navigation.getWidth() - 3 * space) / 4;
+        nav[(size_t)i].setBounds(navigation.removeFromLeft(width));
+        if (i < 3) navigation.removeFromLeft(space);
     }
-    else if(currentPage==Page::fx)
+    auto status = pageArea.removeFromBottom(30);
+    feedback.setBounds(status.reduced(13, 3));
+    auto footer = pageArea.removeFromBottom(170);
+    layoutRow(footer.reduced(30, 6).withTrimmedTop(46),
+              page == Page::cab ? cabSliders : masterSliders,
+              page == Page::cab ? cabCaptions : masterCaptions);
+    auto content = pageArea.reduced(0, 8);
+    const int gap = 16;
+    const int column = (content.getWidth() - gap) / 2;
+    auto left = content.removeFromLeft(column);
+    content.removeFromLeft(gap);
+    auto right = content;
+
+    if (page == Page::amp)
     {
-        auto gate=left.reduced(28,90);
-        switches[4].setBounds(gate.removeFromTop(38).removeFromLeft(155));
-        gate.removeFromTop(14);
-        switches[5].setBounds(gate.removeFromTop(38).removeFromLeft(155));
-        auto threshold=gate.removeFromTop(160);
-        fxCaptions[0].setBounds(threshold.removeFromTop(24));
-        fxSliders[0].setBounds(threshold.reduced(60,0));
-        auto delay=right.reduced(25,90);
-        switches[6].setBounds(delay.removeFromTop(38).removeFromLeft(160));
-        delay.removeFromTop(16);
-        auto middle=delay.reduced(0,0);
-        const int w=(middle.getWidth()-16)/3;
-        for(int i=1;i<4;++i)
+        // Left: amplifier photograph and two separate NAM file rows.
+        const int photoHeight = juce::jmax(200, left.getHeight() - 210);
+        load[0].setBounds(left.getX() + 29, left.getY()+photoHeight+89, 172, 35);
+        filename[0].setBounds(left.getX() + 214, left.getY()+photoHeight+88, left.getWidth()-241, 36);
+        load[1].setBounds(left.getX() + 29, left.getY()+photoHeight+134, 172, 35);
+        filename[1].setBounds(left.getX() + 214, left.getY()+photoHeight+133, left.getWidth()-241, 36);
+        layoutGrid(right.reduced(38, 115).withTrimmedBottom(35), ampSliders, ampCaptions);
+        const auto modeWidth = (right.getWidth() - 108) / 3;
+        for (int i = 0; i < 3; ++i)
+            ampSelect[(size_t)i].setBounds(right.getX()+28+i*(modeWidth+14), right.getBottom()-90, modeWidth, 34);
+        switches[0].setBounds(right.getX()+28, right.getBottom()-48, 166, 30);
+    }
+    else if (page == Page::cab)
+    {
+        const int top = left.getY();
+        const int photoHeight = juce::jmax(188, left.getHeight() / 2 - 6);
+        waveform->setBounds(left.getX()+19, top+photoHeight+59, left.getWidth()-38, 88);
+        const int y = top + photoHeight + 156;
+        const int micGap = 8;
+        const int micWidth = (left.getWidth() - 44 - micGap) / 2;
+        micCanvases[0]->setBounds(left.getX()+20, y, micWidth, left.getBottom()-y-16);
+        micCanvases[1]->setBounds(left.getX()+20+micWidth+micGap, y, micWidth, left.getBottom()-y-16);
+
+        for (int i = 0; i < 2; ++i)
         {
-            auto cell=juce::Rectangle<int>(middle.getX()+(i-1)*(w+8),middle.getY(),w,juce::jmin(210,middle.getHeight()));
-            fxCaptions[(size_t)i].setBounds(cell.removeFromTop(24));
-            fxSliders[(size_t)i].setBounds(cell.reduced(4,0));
+            const int rowY = right.getY()+70+i*62;
+            load[(size_t)(2+i)].setBounds(right.getX()+24, rowY, 160, 34);
+            filename[(size_t)(2+i)].setBounds(right.getX()+196, rowY-1, right.getWidth()-222, 36);
+            micTypeLabels[(size_t)i].setBounds(right.getX()+26, right.getY()+205+i*54, 142, 20);
+            micTypes[(size_t)i].setBounds(right.getX()+171, right.getY()+205+i*54, right.getWidth()-194, 29);
+        }
+        layoutGrid({right.getX()+24, right.getY()+332, right.getWidth()-48,
+                    juce::jmax(180, right.getHeight()-351)}, micSliders, micCaptions);
+        switches[1].setBounds(right.getX()+25,right.getY()+170,150,30);
+        switches[2].setBounds(right.getX()+186,right.getY()+170,130,30);
+        switches[3].setBounds(right.getX()+327,right.getY()+170,130,30);
+    }
+    else if (page == Page::fx)
+    {
+        switches[4].setBounds(left.getX()+28,left.getY()+94,180,32);
+        switches[5].setBounds(left.getX()+225,left.getY()+94,180,32);
+        auto gate = left.reduced(34, 138).withTrimmedTop(22);
+        fxCaptions[0].setBounds(gate.removeFromTop(23));
+        fxSliders[0].setBounds(gate.removeFromTop(170).reduced(110,0));
+        switches[6].setBounds(right.getX()+28,right.getY()+94,180,32);
+        const int x = right.getX()+30;
+        const int y = right.getY()+172;
+        const int w = (right.getWidth()-76)/3;
+        for (int i=1;i<4;++i)
+        {
+            auto cell = juce::Rectangle<int>(x+(i-1)*(w+8),y,w,200);
+            fxCaptions[(size_t)i].setBounds(cell.removeFromTop(22));
+            fxSliders[(size_t)i].setBounds(cell.reduced(3,0));
         }
     }
     else
     {
-        switches[0].setBounds(left.getX()+36,left.getY()+125,200,39);
-        switches[1].setBounds(left.getX()+36,left.getY()+182,200,39);
+        switches[0].setBounds(left.getX()+34,left.getY()+132,210,38);
+        switches[1].setBounds(left.getX()+34,left.getY()+187,210,38);
     }
 }
 
 void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(charcoal);
-    auto area=getLocalBounds().reduced(17);
-    auto header=area.removeFromTop(77);
-    g.setGradientFill(juce::ColourGradient(juce::Colour::fromRGB(70,48,30),
-                                           header.getTopLeft().toFloat(),leather,
-                                           header.getBottomRight().toFloat(),false));
-    g.fillRoundedRectangle(header.toFloat(),15.0f);
-    g.setColour(edge);
-    g.drawRoundedRectangle(header.toFloat(),15.0f,1.2f);
-    g.setColour(text);
-    g.setFont(juce::Font(juce::FontOptions(28.0f,juce::Font::bold)));
-    g.drawText("LIBERTY   /   NEURAL MATRIX",header.getX()+22,header.getY()+11,header.getWidth()-240,34,
-               juce::Justification::centredLeft,false);
-    g.setColour(muted);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)));
-    g.drawText("CAPTURES NAM · CABINET IR · GUITAR TONE LAB",header.getX()+23,header.getY()+49,
-               header.getWidth()-260,18,juce::Justification::centredLeft,false);
-    g.setColour(goldLight);
-    g.setFont(juce::Font(juce::FontOptions(14.0f,juce::Font::bold)));
-    g.drawText("GUITAR EDITION 0.4",header.getRight()-209,header.getY()+24,190,26,
-               juce::Justification::centredRight,false);
+    g.fillAll(bg);
+    auto area = getLocalBounds().reduced(16);
+    auto header = area.removeFromTop(76);
+    auto navArea = area.removeFromTop(48);
+    auto status = area.removeFromBottom(30);
+    auto footer = area.removeFromBottom(170);
+    auto main = area.reduced(0,8);
+    const int gap = 16;
+    const int width = (main.getWidth()-gap)/2;
+    auto left = main.removeFromLeft(width);
+    main.removeFromLeft(gap);
+    auto right = main;
 
-    area.removeFromTop(48);
-    area.removeFromBottom(30);
-    auto footer=area.removeFromBottom(164);
-    plate(g,footer,"MASTER CONTROL","Entrée · fondu NAM · mélange IR · sortie");
-    auto main=area.reduced(0,8);
-    const int half=(main.getWidth()-16)/2;
-    auto left=main.removeFromLeft(half);
-    main.removeFromLeft(16);
-    auto right=main;
-    if(currentPage==Page::amp)
+    g.setGradientFill(juce::ColourGradient(juce::Colour::fromRGB(74,46,25),header.getTopLeft().toFloat(),
+        panel,header.getBottomRight().toFloat(),false));
+    g.fillRoundedRectangle(header.toFloat(),12.0f);
+    g.setColour(panelEdge);g.drawRoundedRectangle(header.toFloat(),12.0f,1.2f);
+    g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(28.0f,juce::Font::bold)));
+    g.drawText("LIBERTY  /  NEURAL MATRIX",header.getX()+22,header.getY()+7,header.getWidth()-245,36,juce::Justification::centredLeft,false);
+    caption(g,"GUITAR EDITION 0.5  -  NAM A1/A2  -  CABINET IR",{header.getX()+24,header.getY()+45,header.getWidth()-290,21},12);
+    caption(g,"LIBERTY MUSIC SOFTWARE",{header.getRight()-236,header.getY()+22,217,31},13,true);
+    g.setColour(black);g.fillRoundedRectangle(navArea.toFloat(),11.0f);
+    card(g,footer,page == Page::cab ? "IR - NIVEAUX ET FILTRES" : "MASTER - CONTROLES PRINCIPAUX");
+    g.setColour(black);g.fillRoundedRectangle(status.toFloat(),8.0f);
+
+    if(page==Page::amp)
     {
-        plate(g,left,"DUAL AMP HEADS","Deux captures NAM indépendantes · A1 et A2 selon les modèles disponibles");
-        plate(g,right,"AMP TONE STACK","Égalisation post-NAM réelle : graves, médiums, aigus, présence");
-        auto cards=left.reduced(22,84);
-        const int gap=16;
-        const int cardH=(cards.getHeight()-gap)/2;
-        for(int i=0;i<2;++i)
+        card(g,left,"AMPLIFICATEUR ET CAPTURES NAM");
+        card(g,right,"ÉGALISATION POST-NAM");
+        const int h = juce::jmax(200,left.getHeight()-210);
+        const auto art = juce::Rectangle<int>(left.getX()+22,left.getY()+54,left.getWidth()-44,h);
+        g.setColour(black);g.fillRoundedRectangle(art.toFloat(),9.0f);
+        if(ampImage.isValid())
         {
-            auto card=juce::Rectangle<int>(cards.getX(),cards.getY()+i*(cardH+gap),cards.getWidth(),cardH);
-            g.setGradientFill(juce::ColourGradient(steel,card.getTopLeft().toFloat(),leather,card.getBottomLeft().toFloat(),false));
-            g.fillRoundedRectangle(card.toFloat(),9.0f);
-            g.setColour(edge);
-            g.drawRoundedRectangle(card.toFloat(),9.0f,1.0f);
-            g.setColour(goldLight);
-            g.setFont(juce::Font(juce::FontOptions(16.0f,juce::Font::bold)));
-            g.drawText(i==0?"AMP A":"AMP B",card.getX()+18,card.getY()+10,160,26,juce::Justification::centredLeft,false);
-            g.fillEllipse((float)card.getRight()-30.0f,(float)card.getY()+14.0f,9.0f,9.0f);
+            g.saveState();g.reduceClipRegion(art);
+            g.drawImageWithin(ampImage,art.getX(),art.getY(),art.getWidth(),art.getHeight(),juce::RectanglePlacement::centred);
+            g.restoreState();
         }
-        sectionText(g,right.reduced(25,84).removeFromBottom(59),"Sélecteur A/B",
-                    "A ou B, ou mélange 50/50. Le gros bouton MIX NAM reste automatisable dans le DAW.");
+        const int ay=left.getY()+h+72;
+        panelLine(g,{left.getX()+19,ay,left.getWidth()-38,122});
+        caption(g,"Mélange entre deux captures - commandes automatisables.",
+                {right.getX()+29,right.getBottom()-116,right.getWidth()-58,21},13);
+        caption(g,"L'EQ agit après le modèle NAM, sans modifier ses poids.",
+                {right.getX()+226,right.getBottom()-38,right.getWidth()-248,20},12);
     }
-    else if(currentPage==Page::cab)
+    else if(page==Page::cab)
     {
-        plate(g,left,"CABINET ROOM","Deux réponses impulsionnelles WAV réelles, en parallèle");
-        plate(g,right,"CAB CONTROL","Niveaux, polarités indépendantes et filtrage coupe-bas/coupe-haut");
-        auto cards=left.reduced(22,84);
-        int gap=16,cardH=(cards.getHeight()-gap)/2;
-        for(int i=0;i<2;++i)
+        card(g,left,"BAFFLE - VISUALISATION IR");
+        card(g,right,"CAPTURES, MICROS ET PLACEMENT");
+        const int h=juce::jmax(188,left.getHeight()/2-6);
+        auto art=juce::Rectangle<int>(left.getX()+22,left.getY()+55,left.getWidth()-44,h-9);
+        g.setColour(black);g.fillRoundedRectangle(art.toFloat(),9.0f);
+        if(cabImage.isValid())
         {
-            auto card=juce::Rectangle<int>(cards.getX(),cards.getY()+i*(cardH+gap),cards.getWidth(),cardH);
-            speaker(g,{card.getX(),card.getY(),110,card.getHeight()});
-            g.setColour(goldLight);
-            g.setFont(juce::Font(juce::FontOptions(16.0f,juce::Font::bold)));
-            g.drawText(i==0?"CAB A":"CAB B",card.getX()+128,card.getY()+12,160,26,
-                       juce::Justification::centredLeft,false);
+            g.saveState();g.reduceClipRegion(art);
+            g.drawImageWithin(cabImage,art.getX(),art.getY(),art.getWidth(),art.getHeight(),juce::RectanglePlacement::centred);
+            g.restoreState();
         }
+        caption(g,"FORMES D'ONDE WAV : IR A (ambre) / IR B (cyan)",
+                {left.getX()+25,left.getY()+h+35,left.getWidth()-50,18},12,true);
+        caption(g,"IR WAV réelles - profils de micros simulés après la convolution.",
+                {right.getX()+25,right.getY()+48,right.getWidth()-50,19},12);
+        caption(g,"Le déplacement modifie le timbre, pas la position acoustique enregistrée.",
+                {right.getX()+25,right.getY()+315,right.getWidth()-50,17},11);
     }
-    else if(currentPage==Page::fx)
+    else if(page==Page::fx)
     {
-        plate(g,left,"GATE & BOOST","Deux traitements fonctionnels avant le moteur NAM");
-        plate(g,right,"STUDIO DELAY","Delay à feedback, traité après le baffle");
-        sectionText(g,left.reduced(32,0).removeFromBottom(76),"Gate et boost pré-ampli",
-                    "Seuil réglable · Boost fixe +6 dB. Le seuil n’agit que lorsque le gate est actif.");
-        sectionText(g,right.reduced(32,0).removeFromBottom(76),"Delay stéréo",
-                    "Temps, réinjection et proportion de signal traité. Activation indépendante.");
+        card(g,left,"GATE ET BOOST");card(g,right,"DELAY STUDIO");
+        caption(g,"Seuil du gate et boost fixe de +6 dB avant le NAM.",
+                {left.getX()+28,left.getY()+60,left.getWidth()-56,21},13);
+        caption(g,"Delay avec temps, réinjection et mélange après les IR.",
+                {right.getX()+28,right.getY()+60,right.getWidth()-56,21},13);
     }
     else
     {
-        plate(g,left,"SIGNAL PATH","Active ou contourne les sections principales du signal");
-        plate(g,right,"INFORMATIONS AUDIO","Indicateurs du moteur et limites connues de cette bêta");
-        sectionText(g,left.reduced(34,0).withTrimmedTop(252),"Chaîne de signal",
-                    "Entrée → Gate / Boost → NAM A/B → Tone Stack → IR A/B → Filtres CAB → Delay → Sortie.");
-        sectionText(g,right.reduced(34,82),"Moteur audio JUCE + NeuralAmpModelerCore",
-                    "Fréquence du moteur : "+juce::String(processor.getPreparedSampleRate(),0)+" Hz. "
-                    "NAM mono traité en entrée commune. Chargement des modèles non temps réel. "
-                    "TONE3000, morphing spectral et alignement IR automatique non encore intégrés.");
+        card(g,left,"CONFIGURATION AUDIO");card(g,right,"MOTEUR ET COMPATIBILITÉ");
+        caption(g,"Activez ou contournez les sections ampli et baffle.",
+                {left.getX()+30,left.getY()+71,left.getWidth()-60,20},13);
+        caption(g,"Interface UTF-8 - accents français vérifiés.",
+                {right.getX()+30,right.getY()+82,right.getWidth()-60,23},13,true);
+        caption(g,"Moteur JUCE + NeuralAmpModelerCore. Les profils micros",
+                {right.getX()+30,right.getY()+125,right.getWidth()-60,23},13);
+        caption(g,"sont des filtres après l'IR, pas des réponses mesurées.",
+                {right.getX()+30,right.getY()+151,right.getWidth()-60,23},13);
+        caption(g,"Échantillonnage hôte : " + juce::String(processor.getPreparedSampleRate(),0) + " Hz",
+                {right.getX()+30,right.getY()+199,right.getWidth()-60,24},13,true);
+        caption(g,"TONE3000 et interpolation d'IR multi-positions : à développer.",
+                {right.getX()+30,right.getY()+247,right.getWidth()-60,24},13);
     }
 }

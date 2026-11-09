@@ -32,7 +32,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-      - name: Preflight checks
+      # v0.5: UTF-8 accents, geometry guards, IR preview and microphone DSP checks
+      - name: Preflight checks (UTF-8 + geometry + DSP)
         run: python scripts/preflight.py
       # Windows GitHub workspace paths repeat the long repository name.
       # JUCE's nested examples then exceed Windows MAX_PATH during git checkout.
