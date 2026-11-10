@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic bounds checks for all active UI controls in the 4 pages.
+"""Deterministic bounds checks for all active UI controls in the 5 pages.
 This tests the intended C++ layout arithmetic at min/default/max dimensions.
 It does not replace visual testing on macOS and Windows.
 """
@@ -21,12 +21,43 @@ def verify(width,height,page):
     iw,ih=width-32,height-32
     iy+=76;ih-=76
     nav=(ix+8,iy+7,iw-16,48-14)
-    navgap=8; navw=(nav[2]-3*navgap)//4
-    for i in range(4):put(f'nav{i}',nav[0]+i*(navw+navgap),nav[1],navw,nav[3])
+    navgap=8; navw=(nav[2]-4*navgap)//5
+    for i in range(5):put(f'nav{i}',nav[0]+i*(navw+navgap),nav[1],navw,nav[3])
     iy+=48;ih-=48
     statusY=iy+ih-30
     put('status',ix+13,statusY+3,iw-26,24)
     ih-=30
+    if page=='library':
+        # Browser: whole page except 30 px status and navigation. All controls
+        # are kept inside this one page; other pages' controls are hidden.
+        bx,by,bw,bh=ix,iy+8,iw,ih-16
+        r=(bx+22,by+22,bw-44,bh-44)
+        rx,ry,rw,rh=r
+        searchW=max(200,rw*35//100)
+        put('folder',rx,ry,142,34)
+        put('refresh',rx+152,ry,126,34)
+        put('search',rx+290,ry,searchW,34)
+        put('filter',rx+rw-166,ry,166,34)
+        put('libraryPath',rx+2,ry+39,rw-4,26)
+        ct=ry+74; cb=ry+rh-62
+        listW=(rw-20)*58//100
+        put('libraryList',rx,ct,listW,cb-ct)
+        px=rx+listW+20; pw=rw-listW-20
+        put('previewSurface',px,ct,pw,cb-ct)
+        # Labels live inside the preview surface, so they are not siblings
+        # eligible for intersection checks; verify their containment instead.
+        for name,x,y,w,h in [
+            ('detail',px+12,cb-61,pw-24,27),
+            ('subdetail',px+12,cb-35,pw-24,23),
+        ]:
+            assert x >= px and x+w <= px+pw and y >= ct and y+h <= cb, (name,width,height)
+        put('favourite',rx,ry+rh-44,180,35)
+        put('loadA',rx+rw-300,ry+rh-44,145,35)
+        put('loadB',rx+rw-145,ry+rh-44,145,35)
+        for (a,ar),(b,br) in combinations(all_rects.items(),2):
+            if overlap(ar,br):
+                raise AssertionError(f'Overlapping {page} {width}x{height}: {a} {ar} and {b} {br}')
+        return len(all_rects)
     footerY=iy+ih-170
     ih-=170
     masterY=footerY+6+46
@@ -115,6 +146,6 @@ def verify(width,height,page):
 if __name__=='__main__':
     count=0
     for width,height in [(1370,930),(1480,950),(1560,980),(1600,1000),(1860,1200)]:
-        for page in ('amp','cab','fx','settings'):
+        for page in ('amp','cab','fx','settings','library'):
             count+=verify(width,height,page)
-    print(f'Geometry test passed: {count} bounds, 4 pages x 5 sizes, no overlapping components.')
+    print(f'Geometry test passed: {count} bounds, 5 pages x 5 sizes, no overlapping components.')

@@ -65,7 +65,7 @@ private:
     std::array<juce::String, 2> pendingProjectPhoto {};
     bool hasPendingProjectVisuals = false;
     std::array<juce::dsp::Convolution, 2> irs;
-    std::array<bool, 2> irLoaded {{ false, false }};
+    std::array<std::atomic<bool>, 2> irLoaded {{ false, false }};
     std::array<std::array<float, 128>, 2> irPeaks {};
 
     juce::AudioBuffer<float> irScratchA, irScratchB;

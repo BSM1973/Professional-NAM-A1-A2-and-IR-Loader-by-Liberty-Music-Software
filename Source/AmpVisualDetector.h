@@ -52,8 +52,9 @@ inline std::string normalize(const std::string& value)
 {
     std::string out = " ";
     bool lastSpace = true;
-    for (unsigned char c : value)
+    for (char byte : value)
     {
+        const auto c = static_cast<unsigned char>(byte);
         const bool isAsciiLetter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
         if (isAsciiLetter || (c >= '0' && c <= '9'))
         {
@@ -76,11 +77,11 @@ inline const std::vector<Rule>& rules()
     static const std::vector<Rule> list = {
         {1,"plexi",25},{1,"super lead",26},{1,"1959 slp",30},{1,"1959hw",28},{1,"1987x",30},
         {2,"jcm800",36},{2,"jcm 800",36},{2,"2203",32},{2,"2204",32},{2,"jcm900",32},{2,"jcm 900",32},
-        {3,"5150",35},{3,"5150iii",36},{3,"5150 iii",36},{3,"6505",35},{3,"evh iii",26},{3,"evh 3",26},{3,"block letter",23},
-        {4,"rectifier",36},{4,"dual rect",32},{4,"triple rect",32},{4,"recto",25},{4,"mesa rect",32},
-        {5,"blackface",28},{5,"twin reverb",32},{5,"deluxe reverb",32},{5,"princeton reverb",32},{5,"super reverb",30},
+        {3,"5150",35},{3,"blockletter",25},{3,"5150iii",36},{3,"5150 iii",36},{3,"6505",35},{3,"evh iii",26},{3,"evh 3",26},{3,"block letter",23},
+        {4,"rectifier",36},{4,"dualrec",32},{4,"triplerec",32},{4,"dual rect",32},{4,"triple rect",32},{4,"recto",25},{4,"mesa rect",32},
+        {5,"blackface",28},{5,"fender twin",32},{5,"twin reverb",32},{5,"deluxe reverb",32},{5,"princeton reverb",32},{5,"super reverb",30},
         {6,"tweed",32},{6,"5e3",33},{6,"5f6a",33},{6,"bassman 59",30},
-        {7,"ac30",34},{7,"ac 30",34},{7,"ac15",34},{7,"ac 15",34},{7,"vox top boost",32},
+        {7,"ac30",34},{7,"vox ac30",35},{7,"ac 30",34},{7,"ac15",34},{7,"ac 15",34},{7,"vox top boost",32},
         {8,"soldano",32},{8,"slo100",35},{8,"slo 100",35},{8,"slo30",33},
         {9,"friedman",32},{9,"be100",35},{9,"be 100",35},{9,"hbe",25},{9,"small box",24},
         {10,"orange",29},{10,"rockerverb",34},{10,"or15",30},{10,"ad30",29},{10,"thunderverb",33},

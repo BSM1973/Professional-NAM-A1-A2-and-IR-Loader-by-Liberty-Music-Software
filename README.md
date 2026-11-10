@@ -86,3 +86,24 @@ cmake --build build --config Release --parallel 3
 `python3 scripts/preflight.py`
 `c++ -std=c++20 -ISource tests/amp_visual_detect_test.cpp -o /tmp/amp-test && /tmp/amp-test`
 `cmake --build build --config Release && ctest --test-dir build -C Release --output-on-failure`
+
+
+## v0.8 — Catalogue et bibliothèque (lot unique)
+
+- Reconnaissance visuelle conservatrice : 18 familles + origine inconnue, indice de confiance, correction manuelle et photo personnelle (non officielles).
+- Façades Liberty redessinées avec relief, textures et boutons métalliques. Elles **évoquent** une famille d'amplis ; il ne s'agit pas de reproductions de marques ni d'une preuve issue du son NAM.
+- Baffles visuels séparés A/B avec configurations estimées 1×12, 2×12 ou 4×12 à partir du nom de l'IR. Le micro est représenté dans les canvases de déplacement ; les véritables positions enregistrées ne sont pas reconstituées.
+- Cinquième onglet **BIBLIOTHÈQUE** : dossier local choisi volontairement, recherche, filtres NAM/IR/favoris, miniatures d'ampli, aperçu réel de l'onde IR, chargement vers A ou B. Favoris et dossier enregistré dans un petit JSON utilisateur.
+- Protection de l'audio lors du changement de session DAW : anciens NAM et IR neutralisés avant rechargement, état IR atomique, type de snapshot validé avant restauration.
+- Tests : 28 scénarios de reconnaissance, fichiers NAM officiels WaveNet/LSTM/A2, roundtrip du codec JUCE des sessions, 665 contrôles de placement et lint Unicode.
+
+### Vérification dans un DAW réel (macOS AU/VST3 et Windows VST3)
+
+1. Charger un NAM A1, un NAM A2, deux WAV IR et enregistrer le projet.
+2. Régler le mix NAM A/B, les filtres et les deux positions de micro ; attribuer un profil visuel manuel et une photo.
+3. Fermer le DAW, le rouvrir, vérifier les paramètres, les fichiers et le rendu audio.
+4. Tester un projet vierge après un projet chargé : aucun ancien NAM/IR ne doit persister.
+5. Renommer temporairement un modèle NAM et rouvrir : le plugin ne doit ni planter ni réutiliser silencieusement le modèle précédent.
+6. Inspecter tous les accents, menus et fenêtres à 1370 × 930 et 1560 × 980, plus un petit écran externe.
+
+Les tests CI ne remplacent pas ces manipulations réelles ; ils n'exécutent pas automatiquement les hôtes Ableton, Logic ou Reaper.

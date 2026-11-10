@@ -5,7 +5,7 @@
 int main()
 {
     struct Test { const char* filename; const char* metadata; const char* directory; int expected; int minConfidence; };
-    constexpr std::array<Test, 21> tests {{
+    constexpr std::array<Test, 27> tests {{
         {"Plexi_100W_A2.nam", "", "", 1, 2},
         {"JCM800_2203_A2.nam", "", "", 2, 2},
         {"EVH_5150III_Blue.nam", "", "", 3, 2},
@@ -26,7 +26,13 @@ int main()
         {"Bogner_Uberschall.nam", "", "", 18, 2},
         {"mystery123.nam", "", "", 0, 0},
         {"untitled.nam", "gear: Marshall JCM800 2203", "", 2, 3},
-        {"unknown.nam", "", "Orange Rockerverb captures", 10, 1}
+        {"unknown.nam", "", "Orange Rockerverb captures", 10, 1},
+        {"dualrec_red.nam", "", "", 4, 2},
+        {"blockletter_clean.nam", "", "", 3, 2},
+        {"Studio.nam", "gear_model: Fender Twin", "", 5, 3},
+        {"Vox_AC30_TopBoost.nam", "", "", 7, 2},
+        {"Mesa_MarkV.nam", "", "", 0, 0},
+        {"Blackstar_HT.nam", "", "", 0, 0}
     }};
     for (const auto& test : tests)
     {
@@ -40,5 +46,5 @@ int main()
     }
     if (libertyAmp::detect("Plexi_JCM800.nam").family != 0)
         return 2;
-    std::cout << "22 amp visual detection checks passed.\n";
+    std::cout << "28 amp visual detection checks passed.\n";
 }

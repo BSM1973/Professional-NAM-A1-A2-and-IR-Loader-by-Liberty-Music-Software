@@ -1,6 +1,7 @@
 #include "TextUtf8.h"
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "SessionStateCodec.h"
 #include <cmath>
 #include <filesystem>
 #include <regex>
@@ -289,7 +290,7 @@ juce::Result LibertyNeuralMatrixAudioProcessor::loadFile(int slot, const juce::F
              juce::dsp::Convolution::Trim::yes, 0, juce::dsp::Convolution::Normalise::no);
         const juce::ScopedLock lock(modelMutex);
         slotPaths[(size_t) slot] = file.getFullPathName();
-        irLoaded[(size_t) idx] = true;
+        irLoaded[(size_t) idx].store(true, std::memory_order_release);
         irPeaks[(size_t) idx] = preview;
     }
     return juce::Result::ok();
@@ -516,8 +517,8 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
             }
         }
 
-        const bool hasIRA = cabOn && irLoaded[0];
-        const bool hasIRB = cabOn && irLoaded[1];
+        const bool hasIRA = cabOn && irLoaded[0].load(std::memory_order_acquire);
+        const bool hasIRB = cabOn && irLoaded[1].load(std::memory_order_acquire);
         if (hasIRA || hasIRB)
         {
             for (int ch = 0; ch < 2; ++ch)
@@ -582,15 +583,17 @@ void LibertyNeuralMatrixAudioProcessor::processBlock(juce::AudioBuffer<float>& b
 void LibertyNeuralMatrixAudioProcessor::getStateInformation(juce::MemoryBlock& destination)
 {
     auto tree = state.copyState();
+    libertySession::Snapshot snapshot;
     {
         const juce::ScopedLock lock(modelMutex);
-        for (int i = 0; i < 4; ++i) tree.setProperty("path" + juce::String(i), slotPaths[(size_t) i], nullptr);
+        snapshot.paths = slotPaths;
         for (int i = 0; i < 2; ++i)
         {
-            tree.setProperty("visualFamily" + juce::String(i), visualInfo[(size_t)i].manualFamily, nullptr);
-            tree.setProperty("visualPhoto" + juce::String(i), visualInfo[(size_t)i].customPhotoPath, nullptr);
+            snapshot.visualFamilies[(size_t)i] = visualInfo[(size_t)i].manualFamily;
+            snapshot.photos[(size_t)i] = visualInfo[(size_t)i].customPhotoPath;
         }
     }
+    libertySession::write(tree, snapshot);
     auto xml = tree.createXml();
     if (xml) copyXmlToBinary(*xml, destination);
 }
@@ -600,22 +603,17 @@ void LibertyNeuralMatrixAudioProcessor::setStateInformation(const void* source, 
     if (auto xml = getXmlFromBinary(source, size))
         if (auto tree = juce::ValueTree::fromXml(*xml); tree.isValid())
         {
+            libertySession::Snapshot snapshot;
+            if (!libertySession::read(tree, state.state.getType(), snapshot)) return;
             state.replaceState(tree);
             {
                 const juce::ScopedLock lock(modelMutex);
-                for (int i = 0; i < 4; ++i)
-                    slotPaths[(size_t) i] = tree.getProperty("path" + juce::String(i)).toString();
-                hasPendingProjectVisuals = tree.hasProperty("visualFamily0")
-                    || tree.hasProperty("visualPhoto0");
-                for (int i = 0; i < 2; ++i)
-                {
-                    pendingProjectFamily[(size_t)i] = (int) tree.getProperty(
-                        "visualFamily" + juce::String(i), -1);
-                    pendingProjectPhoto[(size_t)i] = tree.getProperty(
-                        "visualPhoto" + juce::String(i), {}).toString();
-                }
+                slotPaths = snapshot.paths;
+                hasPendingProjectVisuals = snapshot.visualsPresent;
+                pendingProjectFamily = snapshot.visualFamilies;
+                pendingProjectPhoto = snapshot.photos;
             }
-            triggerAsyncUpdate(); // Never decode NAM/IR inside DAW state callback.
+            triggerAsyncUpdate(); // No file decoding inside the DAW state callback.
         }
 }
 
@@ -626,8 +624,25 @@ void LibertyNeuralMatrixAudioProcessor::handleAsyncUpdate()
         const juce::ScopedLock lock(modelMutex);
         paths = slotPaths;
     }
+    // Empty slots in a newly opened DAW project must not inherit a previous model.
+    // The IR processors may retain their internal convolution history, but their
+    // loaded flags are atomically disabled so they cannot affect the audio.
+    std::array<std::unique_ptr<nam::DSP>, 2> removed;
+    {
+        const juce::ScopedLock lock(modelMutex);
+        for (int i = 0; i < 2; ++i)
+        {
+            // No stale NAM from the previously open project, even when a new
+            // project references a missing or incompatible model.
+            removed[(size_t)i] = std::move(models[(size_t)i]);
+            visualInfo[(size_t)i] = AmpVisualInfo{};
+            irLoaded[(size_t)i].store(false, std::memory_order_release);
+            irPeaks[(size_t)i].fill(0.0f);
+        }
+    }
+    // Destruction of old NAM models happens after unlocking the audio callback.
     for (int i = 0; i < 4; ++i)
-        if (paths[(size_t)i].isNotEmpty()) (void) loadFile(i, juce::File(paths[(size_t) i]));
+        if (paths[(size_t)i].isNotEmpty()) (void) loadFile(i, juce::File(paths[(size_t)i]));
     // Project-specific display settings override the local database if present.
     // We do not write a DAW project snapshot into the global user database.
     const juce::ScopedLock lock(modelMutex);

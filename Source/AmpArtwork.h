@@ -63,6 +63,14 @@ inline void paint(juce::Graphics& g, juce::Rectangle<int> bounds, int family,
     g.fillRoundedRectangle(outer, 9.0f);
     g.setColour(juce::Colours::black.withAlpha(0.9f));
     g.drawRoundedRectangle(outer, 9.0f, 2.0f);
+    // Highlighted piping and beveled cabinet edges give each profile depth.
+    g.setColour(shell.brighter(0.9f).withAlpha(0.38f));
+    g.drawRoundedRectangle(outer.reduced(3.2f), 8.0f, 1.3f);
+    g.setColour(juce::Colours::black.withAlpha(0.44f));
+    g.drawRoundedRectangle(outer.reduced(7.0f), 6.0f, 2.0f);
+    g.setColour(juce::Colours::white.withAlpha(0.13f));
+    g.drawLine(outer.getX()+15.0f, outer.getY()+4.0f,
+               outer.getRight()-15.0f, outer.getY()+4.0f, 1.2f);
 
     // Leather/tweed/wood texture inside bezel, entirely deterministic.
     auto cloth = outer.reduced(6.0f);
@@ -101,8 +109,11 @@ inline void paint(juce::Graphics& g, juce::Rectangle<int> bounds, int family,
                      juce::jmax(10.0f, front.getBottom()-grille.getBottom()-3)};
     }
 
-    g.setColour(juce::Colour(0xff090a0b));
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff232424), grille.getTopLeft(),
+                                           juce::Colour(0xff050607), grille.getBottomRight(), false));
     g.fillRoundedRectangle(grille, 4.0f);
+    g.setColour(juce::Colour(0xffb7a58a).withAlpha(0.18f));
+    g.drawRoundedRectangle(grille.reduced(1.0f), 3.0f, 1.0f);
     g.setColour((diamond ? juce::Colour(0xffbdac96) : juce::Colour(0xff77787a)).withAlpha(0.25f));
     g.saveState();
     g.reduceClipRegion(grille.toNearestInt());
@@ -190,6 +201,8 @@ inline void paint(juce::Graphics& g, juce::Rectangle<int> bounds, int family,
         g.fillEllipse(knob);
         g.setColour(juce::Colours::black);
         g.drawEllipse(knob,0.8f);
+        g.setColour(juce::Colours::white.withAlpha(0.20f));
+        g.drawEllipse(knob.reduced(1.2f),0.8f);
         g.setColour(juce::Colours::white.withAlpha(0.85f));
         g.drawLine(x,y-1,x,y-rad+1,1.0f);
     }

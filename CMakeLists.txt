@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(LibertyNeuralMatrix VERSION 0.7.0 LANGUAGES C CXX)
+project(LibertyNeuralMatrix VERSION 0.8.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -60,7 +60,8 @@ juce_generate_juce_header(LibertyNeuralMatrix)
 target_sources(LibertyNeuralMatrix PRIVATE
   Source/PluginProcessor.h Source/PluginProcessor.cpp
   Source/PluginEditor.h Source/PluginEditor.cpp
-  Source/AmpVisualDetector.h Source/AmpArtwork.h)
+  Source/AmpVisualDetector.h Source/AmpArtwork.h
+  Source/LibraryBrowser.h Source/CabArtwork.h Source/SessionStateCodec.h)
 target_compile_definitions(LibertyNeuralMatrix PRIVATE
   JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
 # NAM registers WaveNet/LSTM/ConvNet/Linear using static TU constructors.
@@ -90,3 +91,25 @@ add_executable(liberty_amp_visual_detect tests/amp_visual_detect_test.cpp)
 target_include_directories(liberty_amp_visual_detect PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
 target_compile_features(liberty_amp_visual_detect PRIVATE cxx_std_20)
 add_test(NAME Amp_Visual_Detection COMMAND liberty_amp_visual_detect)
+
+# JUCE session codec roundtrip: exercises the exact save/restore schema used by
+# the plugin without needing to host a DAW in CI.
+juce_add_console_app(liberty_session_state_smoke PRODUCT_NAME "LNM Session Test")
+juce_generate_juce_header(liberty_session_state_smoke)
+target_sources(liberty_session_state_smoke PRIVATE tests/session_state_smoke.cpp)
+target_include_directories(liberty_session_state_smoke PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+target_link_libraries(liberty_session_state_smoke PRIVATE juce::juce_data_structures)
+target_compile_features(liberty_session_state_smoke PRIVATE cxx_std_20)
+add_test(NAME Session_State_Roundtrip COMMAND liberty_session_state_smoke)
+
+# Real NAM files from the pinned upstream NAM Core release. They are downloaded
+# once by CMake FetchContent and never committed as extra third-party binaries.
+add_executable(liberty_nam_fixture_smoke tests/nam_fixture_smoke.cpp)
+target_link_libraries(liberty_nam_fixture_smoke PRIVATE
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,liberty_nam_core>")
+target_compile_features(liberty_nam_fixture_smoke PRIVATE cxx_std_20)
+foreach(fixture wavenet lstm A2)
+  add_test(NAME NAM_Real_${fixture}
+    COMMAND liberty_nam_fixture_smoke "${namcore_SOURCE_DIR}/example_models/${fixture}.nam")
+endforeach()

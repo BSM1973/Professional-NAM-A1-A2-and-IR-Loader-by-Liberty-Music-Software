@@ -10,7 +10,9 @@ paths = [
     'Source/PluginProcessor.h', 'Source/PluginProcessor.cpp',
     'Source/PluginEditor.h', 'Source/PluginEditor.cpp', 'Source/ArtAssets.h',
     'Source/TextUtf8.h', 'Source/AmpVisualDetector.h', 'Source/AmpArtwork.h',
+    'Source/LibraryBrowser.h', 'Source/CabArtwork.h', 'Source/SessionStateCodec.h',
     'tests/nam_registry_smoke.cpp', 'tests/amp_visual_detect_test.cpp',
+    'tests/session_state_smoke.cpp', 'tests/nam_fixture_smoke.cpp',
     '.github/workflows/build.yml', 'README.md', 'docs/ROADMAP.md',
 ]
 errors=[]
@@ -41,10 +43,17 @@ checks = {
     'Real IR preview': 'irWaveform' in processor and 'AudioFormatReader' in processor,
     'Functional mic drag UI': 'MicPositionCanvas' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
     'Automatic amp recognition': 'libertyAmp::detect' in processor and 'extractModelMetadata' in processor,
-    'Visual override saved': 'storeSavedVisual' in processor and 'visualFamily' in processor,
+    'Visual override saved': 'storeSavedVisual' in processor and 'visualFamily' in (root/'Source/SessionStateCodec.h').read_text(encoding='utf-8'),
     'Photograph override': 'selectAmpPhoto' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
     'Automated detector tests': 'Amp_Visual_Detection' in cmake,
     'Visual family artwork': 'libertyArtwork::paint' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
+    'Dedicated NAM IR library': 'LibertyLibraryBrowser' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
+    'Library favourites persisted': 'writePrefs' in (root/'Source/LibraryBrowser.h').read_text(encoding='utf-8'),
+    'Cabinet artworks': 'libertyCabinetArtwork::paint' in (root/'Source/PluginEditor.cpp').read_text(encoding='utf-8'),
+    'JUCE session save restore smoke test': 'Session_State_Roundtrip' in cmake and 'libertySession::write' in processor and 'libertySession::read' in processor,
+    'Real NAM A1/A2 fixture tests': 'NAM_Real_A2' not in cmake and 'foreach(fixture wavenet lstm A2)' in cmake,
+    'Atomic IR ready flags': 'std::array<std::atomic<bool>, 2> irLoaded' in (root/'Source/PluginProcessor.h').read_text(encoding='utf-8'),
+    'Empty session slots cleared': 'removed[(size_t)i] = std::move(models[(size_t)i])' in processor,
 }
 for name, ok in checks.items():
     print(('OK' if ok else 'FAIL') + ' - ' + name)
@@ -70,22 +79,19 @@ for asset_name in ('ampJpegChunks', 'cabJpegChunks'):
     except (ValueError, base64.binascii.Error):
         errors.append(f'Invalid Base64: {asset_name}')
 
-# Explicit JUCE colour construction: juce::Colour(uint32) is explicit in JUCE 8.
-# Reject list-initialisation of Colour arrays from integer literals (fails Clang/MSVC).
+# JUCE 8 rejects implicit construction of juce::Colour from integral values.
 artwork = (root / 'Source/AmpArtwork.h').read_text(encoding='utf-8')
 for palette in ('chassis', 'faces'):
     palette_match = re.search(r'const std::array<juce::Colour, 19> ' + palette + r'\s*\{\{(.*?)\}\};', artwork, re.S)
     if palette_match is None or len(re.findall(r'juce::Colour\(0x[0-9a-fA-F]{8}\)', palette_match.group(1))) != 19:
-        errors.append('JUCE explicit colour constructors missing: ' + palette)
-
-# JUCE Rectangle<float> has getX()/getY(), not getLeft()/getTop().
-# Keep this regression check before the local and CI compilation stages.
+        errors.append('Missing explicit JUCE colour constructor: ' + palette)
 if re.search(r'\b(?:grille|facePlate|front|outer)\.get(?:Left|Top)\s*\(', artwork):
-    errors.append('Invalid JUCE Rectangle accessor in Source/AmpArtwork.h')
+    errors.append('Invalid JUCE Rectangle accessor in AmpArtwork.h')
 
 # Check common mojibake and replacement glyphs, without scanning Base64 image resources.
 for name in ['Source/PluginEditor.cpp', 'Source/PluginEditor.h',
-             'Source/PluginProcessor.cpp', 'Source/PluginProcessor.h']:
+             'Source/PluginProcessor.cpp', 'Source/PluginProcessor.h',
+             'Source/LibraryBrowser.h', 'Source/CabArtwork.h']:
     content = (root / name).read_text(encoding='utf-8')
     for pattern in ['\ufffd', 'Ã©', 'Ã¨', 'Ãª', 'Ã ', 'â€™', 'â€œ', 'â€', '\u25a1']:
         if pattern in content:

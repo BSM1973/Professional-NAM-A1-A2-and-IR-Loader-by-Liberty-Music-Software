@@ -4,6 +4,8 @@
 #include <array>
 #include <memory>
 
+class LibertyLibraryBrowser;
+
 class LibertyNeuralMatrixAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                       private juce::Timer
 {
@@ -29,11 +31,11 @@ private:
     class IRWaveform;
     class MicPositionCanvas;
 
-    enum class Page { amp, cab, fx, settings };
+    enum class Page { amp, cab, fx, settings, library };
     Page page = Page::amp;
     LibertyNeuralMatrixAudioProcessor& processor;
 
-    std::array<juce::TextButton, 4> nav;
+    std::array<juce::TextButton, 5> nav;
     std::array<juce::TextButton, 4> load;
     std::array<juce::Label, 4> filename;
     std::array<std::unique_ptr<juce::FileChooser>, 4> chooser;
@@ -60,6 +62,7 @@ private:
     std::unique_ptr<IRWaveform> waveform;
     std::array<std::unique_ptr<MicPositionCanvas>, 2> micCanvases;
     juce::Image ampImage, cabImage;
+    std::unique_ptr<LibertyLibraryBrowser> libraryBrowser;
     juce::Label feedback;
 
     void showPage(Page);

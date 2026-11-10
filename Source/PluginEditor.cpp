@@ -2,6 +2,8 @@
 #include "PluginEditor.h"
 #include "ArtAssets.h"
 #include "AmpArtwork.h"
+#include "CabArtwork.h"
+#include "LibraryBrowser.h"
 #include <algorithm>
 #include <cmath>
 
@@ -124,9 +126,17 @@ public:
         g.drawHorizontalLine(plot.getCentreY(), (float) plot.getX(), (float) plot.getRight());
         const float px = plot.getCentreX() + (xval * 0.0041f) * plot.getWidth();
         const float py = plot.getY() + 8.0f + (dval / 80.0f) * (plot.getHeight() - 16.0f);
-        g.setColour(index == 0 ? bronze : juce::Colour::fromRGB(115, 199, 218));
-        g.fillEllipse(px - 7, py - 7, 14, 14);
-        g.setColour(cream); g.drawEllipse(px - 7, py - 7, 14, 14, 1.0f);
+        const auto micColour = index == 0 ? bronze : juce::Colour::fromRGB(115, 199, 218);
+        g.setColour(micColour.withAlpha(0.28f));
+        g.drawLine((float)plot.getRight()-6.0f,(float)plot.getBottom()-5.0f,px,py,2.0f);
+        g.setColour(micColour);
+        g.fillRoundedRectangle(px - 6.5f, py - 9.0f, 13.0f, 18.0f, 4.0f);
+        g.setColour(cream);
+        g.drawRoundedRectangle(px - 6.5f, py - 9.0f, 13.0f, 18.0f, 3.0f, 1.0f);
+        g.drawLine(px - 4, py - 3, px + 4, py - 3, 1.0f);
+        g.drawLine(px - 4, py + 1, px + 4, py + 1, 1.0f);
+        caption(g, "CENTRE", {plot.getX(),plot.getY(),60,15}, 10);
+        caption(g, "BORD", {plot.getRight()-45,plot.getY(),45,15}, 10);
     }
     void mouseDown(const juce::MouseEvent& e) override
     {
@@ -225,13 +235,16 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
     ampImage = loadEmbeddedImage(libertyArt::ampJpegChunks);
     cabImage = loadEmbeddedImage(libertyArt::cabJpegChunks);
 
-    const std::array<juce::String,4> tabs {{ "AMPLI", "BAFFLES / IR", "EFFETS", libertyText::u8("RÉGLAGES") }};
+    const std::array<juce::String,5> tabs {{ "AMPLI", "BAFFLES / IR", "EFFETS", libertyText::u8("RÉGLAGES"), libertyText::u8("BIBLIOTHÈQUE") }};
     const std::array<juce::String,4> loadNames {{ "CHARGER NAM A", "CHARGER NAM B", "CHARGER IR A", "CHARGER IR B" }};
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
         nav[(size_t)i].setButtonText(tabs[(size_t)i]);
         nav[(size_t)i].onClick = [this,i] { showPage(static_cast<Page>(i)); };
         addAndMakeVisible(nav[(size_t)i]);
+    }
+    for (int i = 0; i < 4; ++i)
+    {
         load[(size_t)i].setButtonText(loadNames[(size_t)i]);
         load[(size_t)i].onClick = [this,i] { loadFile(i); };
         addAndMakeVisible(load[(size_t)i]);
@@ -361,6 +374,21 @@ LibertyNeuralMatrixAudioProcessorEditor::LibertyNeuralMatrixAudioProcessorEditor
     }
     waveform = std::make_unique<IRWaveform>(processor);
     addAndMakeVisible(*waveform);
+    libraryBrowser = std::make_unique<LibertyLibraryBrowser>();
+    libraryBrowser->onLoad = [this](int slot, const juce::File& file)
+    {
+        const auto result = processor.loadFile(slot, file);
+        if (result.failed()) showFeedback(libertyText::u8("Erreur de chargement : ") + result.getErrorMessage());
+        else
+        {
+            showFeedback(libertyText::u8("Fichier chargé dans ") + (slot < 2 ? "NAM " : "IR ")
+                         + (slot % 2 == 0 ? "A : " : "B : ") + file.getFileName());
+            refreshFromProcessor();
+            if (slot >= 2) waveform->repaint();
+            repaint();
+        }
+    };
+    addAndMakeVisible(*libraryBrowser);
     feedback.setColour(juce::Label::textColourId, secondary);
     feedback.setFont(juce::Font(juce::FontOptions(12.5f)));
     feedback.setJustificationType(juce::Justification::centredLeft);
@@ -460,9 +488,14 @@ void LibertyNeuralMatrixAudioProcessorEditor::refreshFromProcessor()
 void LibertyNeuralMatrixAudioProcessorEditor::showPage(Page next)
 {
     page = next;
+    for (int i = 0; i < 5; ++i)
+        nav[(size_t)i].setToggleState(static_cast<int>(page) == i, juce::dontSendNotification);
+    libraryBrowser->setVisible(page == Page::library);
     for (int i = 0; i < 4; ++i)
     {
-        nav[(size_t)i].setToggleState(static_cast<int>(page) == i, juce::dontSendNotification);
+        // Existing audio controls are hidden while browsing the library.
+        // Each page owns its own area; no child control overlaps the library.
+
         const bool visible = (page == Page::amp && i < 2) || (page == Page::cab && i >= 2);
         load[(size_t)i].setVisible(visible);
         filename[(size_t)i].setVisible(visible);
@@ -474,8 +507,8 @@ void LibertyNeuralMatrixAudioProcessorEditor::showPage(Page next)
         fxCaptions[(size_t)i].setVisible(page == Page::fx);
         micSliders[(size_t)i].setVisible(page == Page::cab);
         micCaptions[(size_t)i].setVisible(page == Page::cab);
-        masterSliders[(size_t)i].setVisible(page != Page::cab);
-        masterCaptions[(size_t)i].setVisible(page != Page::cab);
+        masterSliders[(size_t)i].setVisible(page != Page::cab && page != Page::library);
+        masterCaptions[(size_t)i].setVisible(page != Page::cab && page != Page::library);
     }
     for (int i = 0; i < 2; ++i)
     {
@@ -587,15 +620,20 @@ void LibertyNeuralMatrixAudioProcessorEditor::resized()
     auto pageArea = getLocalBounds().reduced(16);
     pageArea.removeFromTop(76);
     auto navigation = pageArea.removeFromTop(48).reduced(8, 7);
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
         const int space = 8;
-        const int width = (navigation.getWidth() - 3 * space) / 4;
+        const int width = (navigation.getWidth() - 4 * space) / 5;
         nav[(size_t)i].setBounds(navigation.removeFromLeft(width));
-        if (i < 3) navigation.removeFromLeft(space);
+        if (i < 4) navigation.removeFromLeft(space);
     }
     auto status = pageArea.removeFromBottom(30);
     feedback.setBounds(status.reduced(13, 3));
+    if (page == Page::library)
+    {
+        libraryBrowser->setBounds(pageArea.reduced(0, 8));
+        return;
+    }
     auto footer = pageArea.removeFromBottom(170);
     layoutRow(footer.reduced(30, 6).withTrimmedTop(46),
               page == Page::cab ? cabSliders : masterSliders,
@@ -712,12 +750,18 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(panelEdge);g.drawRoundedRectangle(header.toFloat(),12.0f,1.2f);
     g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(28.0f,juce::Font::bold)));
     g.drawText("LIBERTY  /  NEURAL MATRIX",header.getX()+22,header.getY()+7,header.getWidth()-245,36,juce::Justification::centredLeft,false);
-    caption(g,"GUITAR EDITION 0.7  -  NAM A1/A2  -  CABINET IR",{header.getX()+24,header.getY()+45,header.getWidth()-290,21},12);
+    caption(g,"GUITAR EDITION 0.8  -  NAM A1/A2  -  CABINET IR",{header.getX()+24,header.getY()+45,header.getWidth()-290,21},12);
     caption(g,"LIBERTY MUSIC SOFTWARE",{header.getRight()-236,header.getY()+22,217,31},13,true);
     g.setColour(black);g.fillRoundedRectangle(navArea.toFloat(),11.0f);
-    card(g,footer,page == Page::cab ? "IR - NIVEAUX ET FILTRES" : "MASTER - CONTROLES PRINCIPAUX");
+    if (page != Page::library)
+        card(g,footer,page == Page::cab ? "IR - NIVEAUX ET FILTRES" : "MASTER - CONTROLES PRINCIPAUX");
     g.setColour(black);g.fillRoundedRectangle(status.toFloat(),8.0f);
 
+    if(page==Page::library)
+    {
+        // The browser paints its own full-width dedicated surface.
+        return;
+    }
     if(page==Page::amp)
     {
         card(g,left,"AMPLIFICATEUR ET CAPTURES NAM");
@@ -767,12 +811,7 @@ void LibertyNeuralMatrixAudioProcessorEditor::paint(juce::Graphics& g)
         const int h=juce::jmax(188,left.getHeight()/2-6);
         auto art=juce::Rectangle<int>(left.getX()+22,left.getY()+55,left.getWidth()-44,h-9);
         g.setColour(black);g.fillRoundedRectangle(art.toFloat(),9.0f);
-        if(cabImage.isValid())
-        {
-            g.saveState();g.reduceClipRegion(art);
-            g.drawImageWithin(cabImage,art.getX(),art.getY(),art.getWidth(),art.getHeight(),juce::RectanglePlacement::centred);
-            g.restoreState();
-        }
+        libertyCabinetArtwork::paint(g, art, processor.slotDisplayName(2), processor.slotDisplayName(3));
         caption(g,"FORMES D'ONDE WAV : IR A (ambre) / IR B (cyan)",
                 {left.getX()+25,left.getY()+h+35,left.getWidth()-50,18},12,true);
         caption(g,libertyText::u8("IR WAV réelles - profils de micros simulés après la convolution."),
